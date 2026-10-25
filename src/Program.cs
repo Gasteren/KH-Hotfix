@@ -144,7 +144,7 @@ namespace KHHotfix
         public static int LoadingRescueSeconds = 10;
         public static string BugReportHotkey = "Ctrl+Alt+B";
         // The project's report relay (relay\worker.js): forwards reports to the maintainer's Discord. Set by relay\Deploy-Relay.ps1.
-        public static string ReportRelay = "";
+        public static string ReportRelay = "https://kh-hotfix-reports.gasteren.workers.dev";
         public static bool AutoReports = true;
         public static string DiscordBugReportWebhook = "";
         public static string DiscordLogWebhook = "";

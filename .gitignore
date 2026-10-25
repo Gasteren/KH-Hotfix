@@ -15,3 +15,6 @@ KHHotfix.local.ini
 
 # Files prepared for sharing privately (e.g. a KHHotfix.local.ini with Discord webhooks)
 /Share/
+
+# Cloudflare deploy tool cache (account details)
+.wrangler/

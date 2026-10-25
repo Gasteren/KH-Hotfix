@@ -42,12 +42,6 @@ Run **`Uninstall.cmd`**, or Start menu > **KH Hotfix** > *Uninstall KH Hotfix*. 
 - **Crash on Alt+Tab:** set *Screen Mode* to *Borderless Windowed* in the KH launcher's System Settings.
 - **Anything else:** press **Ctrl+Alt+B** while it happens, or use Start menu > KH Hotfix > *Report a KINGDOM HEARTS bug*.
 
-## For developers
-
-Build with `build.cmd`; test with `KHHotfixCli.exe --selftest`, `tests\Run-Tests.ps1` and `tests\Test-Install.ps1`.
-To receive bug and crash reports in Discord, give your players a `KHHotfix.local.ini` with
-`DiscordBugReportWebhook=<url>` and `DiscordLogWebhook=<url>` to put next to `Install.cmd`. Never publish these URLs.
-
 ## License
 
 [MIT](LICENSE)

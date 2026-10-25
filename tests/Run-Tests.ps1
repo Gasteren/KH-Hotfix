@@ -20,7 +20,7 @@ Copy-Item "$work\FakeKH.exe" (Join-Path $game 'KINGDOM HEARTS FINAL MIX.exe')
 Invoke-HotfixBuild $root $hot   # fresh build from src\ (never uses or locks the binaries of a running hotfix)
 $env:KHHOTFIX_INSTANCE = '.test'  # separate session lock, so the tests also run while a real game session is active
 
-# Local fake Discord: webhook 1 behaves like a forum channel, webhook 2 like a text channel (see FakeKH.cs).
+# Local fake Discord / report relay: /log behaves like a forum channel, /bug like a text channel (see FakeKH.cs).
 $discord = Join-Path $work 'discord'
 $fakeDiscord = Start-Process -FilePath "$work\FakeKH.exe" -ArgumentList @('--fake-discord', ('"' + $discord + '"')) -PassThru
 for ($i = 0; $i -lt 100 -and -not (Test-Path (Join-Path $discord 'port.txt')); $i++) { Start-Sleep -Milliseconds 100 }
@@ -34,8 +34,7 @@ HungWindowKillSeconds=6
 ExitGraceSeconds=3
 PanicHotkey=Ctrl+Alt+Shift+F11
 BugReportHotkey=Ctrl+Alt+Shift+F10
-DiscordLogWebhook=http://127.0.0.1:$port/api/webhooks/1/forum-token
-DiscordBugReportWebhook=http://127.0.0.1:$port/api/webhooks/2/text-token
+ReportRelay=http://127.0.0.1:$port
 "@ | Set-Content -Path (Join-Path $hot 'KHHotfix.ini') -Encoding ASCII
 
 $env:KHHOTFIX_SAVES_ROOT = $saves
@@ -81,7 +80,7 @@ try {
     Expect ($r.Log -match 'refresh switching disabled') 'display untouched when TargetRefreshHz=0'
     Expect ($r.Log -match 'Audio outputs enabled: \d+') 'audio outputs checked before launch'
     Expect ($r.Log -match 'loading guard not available: .*different game version') 'loading guard backs off on an unknown KH1 build (writes nothing)'
-    Expect ($r.Log -match 'Discord: bug reports webhook 2, crash and session reports webhook 1' -and $r.Log -notmatch 'forum-token|text-token') 'Discord webhooks configured; the log shows ids, never tokens'
+    Expect ($r.Log -match 'Discord: bug reports relay 127\.0\.0\.1:\d+/bug, crash and session reports relay 127\.0\.0\.1:\d+/log') 'reports go to the maintainer through the report relay'
     Expect ($r.Log -match 'Bug report hotkey active: Ctrl\+Alt\+Shift\+F10') 'bug report hotkey registered'
     Expect ((Get-Posts).Count -eq 0) 'nothing is posted to Discord for a session without problems'
 
@@ -95,7 +94,7 @@ try {
     $post = Get-NewPost $posts
     Expect ($post -and $post.Hook -eq '1' -and $post.Json.thread_name -match '^\[KH1\] KINGDOM HEARTS FINAL MIX crashed: 0xC0000005 \(access violation\) - ') 'crash posted to the log webhook automatically, as a titled forum post'
     Expect ($post -and $post.Files -contains 'summary.txt' -and $post.Files -contains 'session.log' -and $post.Files -contains 'system.txt' -and $post.Json.embeds[0].title -eq 'Crash report' -and $post.Raw -match '"allowed_mentions":\{"parse":\[\]\}') 'crash post: summary, session log, system info, crash embed, no pings'
-    Expect ($rep -and (Test-Path (Join-Path $rep.FullName 'discord-sent.txt')) -and $r.Log -match 'Report sent to Discord \(webhook 1\)') 'crash report marked as sent'
+    Expect ($rep -and (Test-Path (Join-Path $rep.FullName 'discord-sent.txt')) -and $r.Log -match 'Report sent to Discord \(relay 127\.0\.0\.1:\d+/log\)') 'crash report marked as sent'
     Expect ($r.Log -notmatch 'NOTICE: KINGDOM HEARTS session summary' -and $r.Log -match 'Not shown to the player \(DetailedMessages=0\): .*crashed\. Your saves were backed up') 'crash reported automatically: no session summary dialog for the player'
 
     Write-Host 'Scenario: shutdown hang (window closed, process never exits)'
@@ -144,7 +143,7 @@ try {
     Write-Host 'Bug report from the command line (fake game window, text-channel webhook)'
     $cli = Join-Path $hot 'KHHotfixCli.exe'
     $out = & $cli --discord-test | Out-String
-    Expect ($LASTEXITCODE -eq 0 -and $out -match 'Bug reports .*webhook 2 OK' -and $out -match 'Crash and session reports .*webhook 1 OK .*forum channel' -and $out -notmatch 'token') '--discord-test checks both webhooks (nothing posted, no tokens shown)'
+    Expect ($LASTEXITCODE -eq 0 -and $out -match 'Bug reports: relay 127\.0\.0\.1:\d+/bug OK' -and $out -match 'Crash and session reports: relay 127\.0\.0\.1:\d+/log OK .*forum channel') '--discord-test checks both relay endpoints (nothing posted)'
     $posts = (Get-Posts).Count
     $out = & $cli --discord-test --send | Out-String
     $code = $LASTEXITCODE

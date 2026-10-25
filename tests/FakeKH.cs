@@ -78,8 +78,9 @@ static class FakeKH
     }
 }
 
-// Local stand-in for Discord's webhook API. Webhook id 1 behaves like a forum channel (a message needs thread_name,
-// error 220001 otherwise), webhook id 2 like a text channel (thread_name is rejected with error 220003).
+// Local stand-in for Discord's webhook API and for the report relay (relay\worker.js forwards its /log and /bug
+// endpoints to Discord unchanged). Webhook id 1 and /log behave like a forum channel (a message needs thread_name,
+// error 220001 otherwise), webhook id 2 and /bug like a text channel (thread_name is rejected with error 220003).
 // Writes <dir>\port.txt when ready; every accepted message is saved as post-N.json (payload_json) and post-N.files
 // ("name size" per attachment); every request is listed in requests.txt. Stops when <dir>\stop.txt appears.
 static class FakeDiscord
@@ -150,7 +151,8 @@ static class FakeDiscord
             }
         }
         Match id = Regex.Match(request, "/webhooks/(\\d+)/");
-        string hook = id.Success ? id.Groups[1].Value : "0";
+        Match relay = Regex.Match(request, "^\\S+ /(bug|log)(?:[/?]|$)");   // the report relay's endpoints
+        string hook = id.Success ? id.Groups[1].Value : relay.Success ? (relay.Groups[1].Value == "log" ? "1" : "2") : "0";
         bool titled = payload != null && payload.Contains("\"thread_name\"");
         string reply;
         if (request.StartsWith("GET")) reply = "200 {\"id\":\"" + hook + "\",\"name\":\"Fake webhook " + hook + "\",\"channel_id\":\"5" + hook + "\",\"guild_id\":\"777\",\"token\":\"x\"}";

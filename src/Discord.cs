@@ -122,6 +122,8 @@ namespace KHHotfix
         static readonly Regex WebhookRx = new Regex(@"^https://(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api(?:/v\d+)?/webhooks/(\d{5,25})/[A-Za-z0-9_\-]{20,128}/?$", RegexOptions.IgnoreCase);
         // Loopback endpoints are accepted so the tests can use a local fake Discord server.
         static readonly Regex LocalRx = new Regex(@"^http://(?:127\.0\.0\.1|localhost):\d{1,5}/api(?:/v\d+)?/webhooks/(\d{1,25})/[A-Za-z0-9_\-]{1,128}/?$", RegexOptions.IgnoreCase);
+        // The project's report relay (relay\worker.js): /bug and /log; plain http only on this PC (tests).
+        static readonly Regex RelayRx = new Regex(@"^(?:https://[A-Za-z0-9.\-]+(?::\d{1,5})?|http://(?:127\.0\.0\.1|localhost):\d{1,5})(?:/[A-Za-z0-9._~\-]+)*/(bug|log)/?$", RegexOptions.IgnoreCase);
 
         public sealed class Attachment
         {
@@ -156,20 +158,29 @@ namespace KHHotfix
         {
             if (string.IsNullOrEmpty(url)) return false;
             string u = url.Trim();
-            return WebhookRx.IsMatch(u) || LocalRx.IsMatch(u);
+            return WebhookRx.IsMatch(u) || LocalRx.IsMatch(u) || RelayRx.IsMatch(u);
         }
+
+        static bool IsRelay(string url) { return url != null && !WebhookRx.IsMatch(url.Trim()) && !LocalRx.IsMatch(url.Trim()) && RelayRx.IsMatch(url.Trim()); }
 
         static string WebhookId(string url)
         {
             Match m = WebhookRx.Match(url.Trim());
             if (!m.Success) m = LocalRx.Match(url.Trim());
-            return m.Success ? m.Groups[1].Value : null;
+            if (m.Success) return m.Groups[1].Value;
+            m = RelayRx.Match(url.Trim());
+            return m.Success ? "relay-" + m.Groups[1].Value.ToLowerInvariant() : null;
         }
 
-        // Safe to log or show: the webhook id without its secret token.
+        // Safe to log or show: the webhook id without its secret token, or the relay endpoint (which holds no secret).
         public static string Describe(string url)
         {
             if (string.IsNullOrEmpty(url) || url.Trim().Length == 0) return "not set";
+            if (IsRelay(url))
+            {
+                Uri u = new Uri(url.Trim());
+                return "relay " + u.Authority + u.AbsolutePath.TrimEnd('/');
+            }
             string id = WebhookId(url);
             return id == null ? "invalid webhook URL" : "webhook " + id;
         }
@@ -290,7 +301,7 @@ namespace KHHotfix
         public static string Check(string url, int timeoutMs, out string info)
         {
             info = null;
-            if (!IsWebhook(url)) return "the Discord webhook URL is not valid";
+            if (!IsWebhook(url)) return "the report address is not valid";
             PrepareNetwork();
             string resp, err;
             int status = Http("GET", url.Trim().TrimEnd('/'), null, null, timeoutMs, out resp, out err);
@@ -302,18 +313,21 @@ namespace KHHotfix
                 info = "\"" + Json.Find(resp, "name") + "\" in channel " + Json.Find(resp, "channel_id") + (st.ContainsKey("kind") ? " (" + st["kind"] + " channel)" : "");
                 return null;
             }
-            return Explain(status, Json.Find(resp, "code"), Json.Find(resp, "message"), err);
+            return Explain(status, Json.Find(resp, "code"), Json.Find(resp, "message"), err, IsRelay(url));
         }
 
-        static string Explain(int status, string code, string message, string error)
+        static string Explain(int status, string code, string message, string error, bool relay)
         {
-            if (status == 0) return "no connection to Discord (" + error + ")";
+            string server = relay ? "the KH Hotfix report server" : "Discord";
+            if (status == 0) return "no connection to " + server + " (" + error + ")";
+            if (relay && status != 400 && status != 413 && status != 429)
+                return "the KH Hotfix report server answered HTTP " + status + (message != null ? ": " + message : "");
             if (status == 401 || status == 403 || status == 404)
                 return "the Discord webhook does not exist any more or may not post (HTTP " + status + "). Ask for a new webhook URL.";
             if (status == 400 && code == "40067")
                 return "the Discord forum requires a tag on new posts: turn off \"Require tags\" for the forum or set DiscordBugReportTags in KHHotfix.local.ini.";
             if (status == 413) return "the report is too large for Discord, even without the optional files.";
-            return "Discord answered HTTP " + status + (code != null ? ", code " + code : "") + (message != null ? ": " + message : "");
+            return server + " answered HTTP " + status + (code != null ? ", code " + code : "") + (message != null ? ": " + message : "");
         }
 
         static string Payload(Message m, bool thread, ICollection<string> files)
@@ -354,7 +368,7 @@ namespace KHHotfix
         public static Result Send(string url, Message m, int timeoutMs)
         {
             var r = new Result();
-            if (!IsWebhook(url)) { r.Error = "the Discord webhook URL is not valid"; return r; }
+            if (!IsWebhook(url)) { r.Error = "the report address is not valid"; return r; }
             PrepareNetwork();
             string endpoint = url.Trim().TrimEnd('/');
             string id = WebhookId(endpoint);
@@ -412,7 +426,7 @@ namespace KHHotfix
                     if (big != null) { files.Remove(big); r.Dropped.Add(big.Name); continue; }
                 }
                 if (status >= 500 && serverErrors++ < 2) { Thread.Sleep(ServerErrorDelayMs); continue; }
-                r.Error = Explain(status, code, Json.Find(resp, "message"), err);
+                r.Error = Explain(status, code, Json.Find(resp, "message"), err, IsRelay(endpoint));
                 return r;
             }
             r.Error = "Discord did not accept the report after several attempts";

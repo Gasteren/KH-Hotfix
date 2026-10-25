@@ -6,6 +6,7 @@
 # Not needed to install, use or uninstall the hotfix: left out of GitHub's "Download ZIP".
 /.github export-ignore
 /tests export-ignore
+/relay export-ignore
 /build.cmd export-ignore
 /README.md export-ignore
 /.gitattributes export-ignore

@@ -13,7 +13,7 @@ namespace KHHotfix
 {
     // "Report a bug": Ctrl+Alt+B while playing (or Start menu > KH Hotfix > Report a KINGDOM HEARTS bug) captures the moment
     // (screenshot, state of the game, technical snapshot) into Reports\bug-<time>\ and opens a window to describe the
-    // problem. The report is posted to DiscordBugReportWebhook, or saved for a GitHub issue when Discord is not set up.
+    // problem. The report is posted to the maintainer's Discord (BugReportTarget), or saved for a GitHub issue when reporting is off.
     internal static class BugReport
     {
         public static readonly string[] Categories = { "Crash (the game closed)", "Freeze or stuck", "Endless loading screen", "Sound", "Graphics",
@@ -260,15 +260,15 @@ namespace KHHotfix
             SaveText(dir, d);
             if (d.Reporter != null) Reporting.ReporterName = d.Reporter;
             SystemInfo sys = SystemInfo.Collect(Get(ReadMeta(dir), "GameDir") ?? Reporting.GuessGameDir());
-            Discord.Result r = Discord.Send(Settings.DiscordBugReportWebhook, Compose(dir, d, sys), 60000);
+            Discord.Result r = Discord.Send(Settings.BugReportTarget, Compose(dir, d, sys), 60000);
             if (r.Dropped.Count > 0) Log.Warn("Bug report: left out because Discord's size limit was reached: " + string.Join(", ", r.Dropped));
             if (r.Ok)
             {
                 Reporting.MarkSent(dir, r);
                 if (!string.IsNullOrEmpty(d.CrashReport)) Reporting.MarkSent(d.CrashReport, r);
-                Log.Info("Bug report sent to Discord (" + Discord.Describe(Settings.DiscordBugReportWebhook) + ")" + (r.Link != null ? ": " + r.Link : ""));
+                Log.Info("Bug report sent to Discord (" + Discord.Describe(Settings.BugReportTarget) + ")" + (r.Link != null ? ": " + r.Link : ""));
             }
-            else Log.Warn("Bug report not sent (" + Discord.Describe(Settings.DiscordBugReportWebhook) + "): " + r.Error);
+            else Log.Warn("Bug report not sent (" + Discord.Describe(Settings.BugReportTarget) + "): " + r.Error);
             return r;
         }
 
@@ -318,9 +318,9 @@ namespace KHHotfix
                 Logs = !a.Contains("--no-logs"),
                 Snapshot = !a.Contains("--no-snapshot")
             };
-            if (!Discord.IsWebhook(Settings.DiscordBugReportWebhook))
+            if (!Discord.IsWebhook(Settings.BugReportTarget))
             {
-                Console.WriteLine("Discord reporting is not set up (DiscordBugReportWebhook). The report was saved: " + SaveText(dir, d));
+                Console.WriteLine("Bug reporting is turned off (ReportRelay). The report was saved: " + SaveText(dir, d));
                 return 4;
             }
             Discord.Result r = Send(dir, d);

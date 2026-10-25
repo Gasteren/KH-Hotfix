@@ -132,15 +132,15 @@ namespace KHHotfix
             return active == 0 ? 5 : active == 1 ? 4 : 0;
         }
 
-        // Checks the configured Discord webhooks without posting; with --send also posts a short test message to each.
+        // Checks where reports go without posting; with --send also posts a sample report to each.
         static int DiscordTest(bool send)
         {
-            string[] names = { "Bug reports (DiscordBugReportWebhook)", "Crash and session reports (DiscordLogWebhook)" };
-            string[] urls = { Settings.DiscordBugReportWebhook, Settings.DiscordLogWebhook };
+            string[] names = { "Bug reports", "Crash and session reports" };
+            string[] urls = { Settings.BugReportTarget, Settings.LogReportTarget };
             int problems = 0, configured = 0;
             for (int i = 0; i < 2; i++)
             {
-                if (string.IsNullOrEmpty(urls[i])) { Console.WriteLine(names[i] + ": not set"); continue; }
+                if (string.IsNullOrEmpty(urls[i])) { Console.WriteLine(names[i] + ": " + (i == 1 && !Settings.AutoReports ? "off (AutoReports=0)" : "not set")); continue; }
                 configured++;
                 string info;
                 string problem = Discord.Check(urls[i], 15000, out info);
@@ -399,6 +399,37 @@ namespace KHHotfix
                 && !Discord.IsWebhook("") && !Discord.IsWebhook(null), "anything else is rejected (plain http, other hosts, short tokens, extra parameters)");
             Expect(Discord.Describe(hook) == "webhook 123456789012345678" && !Discord.Describe(hook).Contains(token) && Discord.Describe("") == "not set"
                 && Discord.Describe("https://example.com/x") == "invalid webhook URL", "logs show the webhook id, never its token");
+            Expect(Discord.IsWebhook("https://kh-hotfix-reports.example.workers.dev/bug") && Discord.IsWebhook("https://kh-hotfix-reports.example.workers.dev/log")
+                && Discord.IsWebhook("https://example.org/kh/relay/log/") && Discord.IsWebhook("http://127.0.0.1:8787/bug")
+                && !Discord.IsWebhook("http://reports.example.org/bug") && !Discord.IsWebhook("https://kh-hotfix-reports.example.workers.dev/")
+                && !Discord.IsWebhook("https://kh-hotfix-reports.example.workers.dev/admin") && !Discord.IsWebhook("https://example.org/bug?x=1"),
+                "report relay endpoints accepted (/bug, /log over https; http only on this PC)");
+            Expect(Discord.Describe("https://kh-hotfix-reports.example.workers.dev/bug") == "relay kh-hotfix-reports.example.workers.dev/bug",
+                "logs show the relay endpoint");
+
+            string relayBackup = Settings.ReportRelay, bugHookBackup = Settings.DiscordBugReportWebhook, logTargetBackup = Settings.DiscordLogWebhook;
+            bool autoBackup = Settings.AutoReports;
+            try
+            {
+                Settings.ReportRelay = "https://kh-hotfix-reports.example.workers.dev";
+                Settings.DiscordBugReportWebhook = Settings.DiscordLogWebhook = "";
+                Settings.AutoReports = true;
+                Expect(Settings.BugReportTarget == "https://kh-hotfix-reports.example.workers.dev/bug" && Settings.LogReportTarget == "https://kh-hotfix-reports.example.workers.dev/log",
+                    "every copy reports to the maintainer through the relay");
+                Settings.DiscordBugReportWebhook = hook;
+                Settings.AutoReports = false;
+                Expect(Settings.BugReportTarget == hook && Settings.LogReportTarget == "", "own webhooks take precedence; AutoReports=0 stops automatic reports");
+                Settings.ReportRelay = "";
+                Settings.DiscordBugReportWebhook = "";
+                Expect(Settings.BugReportTarget == "", "ReportRelay= (empty) turns reporting off");
+            }
+            finally
+            {
+                Settings.ReportRelay = relayBackup;
+                Settings.DiscordBugReportWebhook = bugHookBackup;
+                Settings.DiscordLogWebhook = logTargetBackup;
+                Settings.AutoReports = autoBackup;
+            }
             Expect(Json.Str("a\"b\\c\nd\u0001\u2028") == "\"a\\\"b\\\\c\\nd\\u0001\\u2028\"", "JSON strings escaped (quotes, backslashes, control characters)");
             const string reply = "{\"code\": 220001, \"message\": \"say \\\"hi\\\"\\n\", \"retry_after\": 0.25}";
             Expect(Json.Find(reply, "code") == "220001" && Json.Find(reply, "message") == "say \"hi\"\n" && Json.Find(reply, "retry_after") == "0.25"
@@ -983,12 +1014,14 @@ namespace KHHotfix
             }
 
             Console.WriteLine("Messages for the player");
-            bool shownBackup = Settings.DetailedMessages;
-            string logHookBackup = Settings.DiscordLogWebhook;
+            bool shownBackup = Settings.DetailedMessages, autoReportsBackup = Settings.AutoReports;
+            string logHookBackup = Settings.DiscordLogWebhook, relaySetting = Settings.ReportRelay;
             try
             {
                 Settings.DetailedMessages = false;
                 Settings.DiscordLogWebhook = "";
+                Settings.ReportRelay = "";   // as on a PC where reporting is turned off
+                Settings.AutoReports = true;
                 var n = new Notices();
                 n.Add("save restored");
                 n.Detail("loading screen released");
@@ -1011,6 +1044,8 @@ namespace KHHotfix
             {
                 Settings.DetailedMessages = shownBackup;
                 Settings.DiscordLogWebhook = logHookBackup;
+                Settings.ReportRelay = relaySetting;
+                Settings.AutoReports = autoReportsBackup;
             }
 
             DiscordTests();

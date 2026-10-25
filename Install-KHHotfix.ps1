@@ -123,14 +123,14 @@ catch {
 if ($r.Code -ne 0) { Write-Host $r.Output; throw 'The hotfix self-test failed. Nothing on your PC was changed.' }
 Write-Ok 'KHHotfix.exe and KHHotfixCli.exe built; self-test passed'
 
-# Only checks the webhooks (nothing is posted). Exit code 3: Discord reporting is not set up.
+# Only checks where reports go (nothing is posted). Exit code 3: reporting is turned off.
 $r = Invoke-Cli @('--discord-test')
 if ($r.Code -ne 3) {
-    Write-Step 'Discord reporting'
-    if ($r.Code -eq 0) { Write-Ok 'Bug reports and crash reports will be sent to Discord' }
+    Write-Step 'Reports to the developer'
+    if ($r.Code -eq 0) { Write-Ok 'Bug reports and crash reports reach the KH Hotfix developer' }
     else {
         $r.Output -split "`r?`n" | Where-Object { $_ } | ForEach-Object { Write-Info $_ }
-        Write-Warn2 'Discord reporting does not work yet (see above). The game and the rest of the hotfix are not affected.'
+        Write-Warn2 'Reports cannot be sent right now (see above). The game and the rest of the hotfix are not affected.'
     }
 }
 
@@ -242,5 +242,6 @@ Write-Host @"
    While playing: Ctrl+Alt+B reports a bug (with a screenshot of the game).
                   Ctrl+Alt+K backs up your saves and force-closes a frozen game.
    Report a bug, restore a save, uninstall: Start menu > KH Hotfix.
+   Crash reports go to the developer automatically (AutoReports=0 in KHHotfix.local.ini turns this off).
    Tip: Screen Mode = Borderless Windowed (KH launcher > System Settings) avoids crashes on Alt+Tab.
 "@

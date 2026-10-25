@@ -1,0 +1,11 @@
+# Cloudflare Worker that forwards KH Hotfix reports to the maintainer's Discord. Deploy with Deploy-Relay.cmd.
+name = "kh-hotfix-reports"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+workers_dev = true
+
+# At most 10 reports per minute from one address.
+[[ratelimits]]
+name = "LIMITER"
+namespace_id = "2552430"
+simple = { limit = 10, period = 60 }

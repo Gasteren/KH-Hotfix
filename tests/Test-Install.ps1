@@ -80,7 +80,7 @@ try {
     $inst = Join-Path $work 'Installed'
     $menu = Join-Path $work 'StartMenu'
     # Discord settings shared privately: a KHHotfix.local.ini placed next to Install.cmd (nothing listens on port 9)
-    Set-Content -LiteralPath (Join-Path $src 'KHHotfix.local.ini') -Value 'DiscordLogWebhook=http://127.0.0.1:9/api/webhooks/1/secret-token-111' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $src 'KHHotfix.local.ini') -Value @('DiscordLogWebhook=http://127.0.0.1:9/api/webhooks/1/secret-token-111', 'ReportRelay=http://127.0.0.1:9') -Encoding ASCII
     $installArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $src 'Install-KHHotfix.ps1'), '-InstallDir', $inst, '-ShortcutRoot', $menu, '-SkipSteam', '-NoNvidia', '-NoClipboard')
     $r = Invoke-Quiet { '' | powershell.exe @installArgs }
     Expect ($r.Code -eq 0) "installer exit code 0 (got $($r.Code))"
@@ -100,7 +100,7 @@ try {
     Expect ($r.Out -match [regex]::Escape('"' + (Join-Path $inst 'KHHotfix.exe') + '" %command%')) 'launch option shown for the installed copy'
     $localIni = Join-Path $inst 'KHHotfix.local.ini'
     Expect ((Test-Path $localIni) -and (Get-Content -Raw $localIni) -match 'DiscordLogWebhook=http://127\.0\.0\.1:9/api/webhooks/1/secret-token-111') 'shared KHHotfix.local.ini settings added to the installation'
-    Expect ($r.Out -match 'Settings from KHHotfix\.local\.ini added: DiscordLogWebhook' -and $r.Out -match 'Discord reporting does not work yet' -and $r.Out -notmatch 'secret-token') 'installer checks Discord reporting and never shows the webhook token'
+    Expect ($r.Out -match 'Settings from KHHotfix\.local\.ini added: DiscordLogWebhook' -and $r.Out -match 'Reports cannot be sent right now' -and $r.Out -notmatch 'secret-token') 'installer checks the report path and never shows a webhook token'
     Expect ((Get-Content (Join-Path $inst 'KHHotfix.ini')) -contains 'TargetRefreshHz=0' -and $r.Out -notmatch '60 FPS|Frame Rate\s*:\s*60') 'no 60 Hz / 60 FPS limit: display left alone, no frame rate advice'
 
     Write-Host 'Update from a new download'

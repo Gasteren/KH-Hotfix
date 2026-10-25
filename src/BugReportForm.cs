@@ -31,7 +31,7 @@ namespace KHHotfix
         {
             this.dir = dir;
             meta = BugReport.ReadMeta(dir);
-            discord = Discord.IsWebhook(Settings.DiscordBugReportWebhook);
+            discord = Discord.IsWebhook(Settings.BugReportTarget);
             crashDir = Reporting.LatestUnsentCrashReport(TimeSpan.FromHours(24));
             string shotFile = Path.Combine(dir, "screenshot.jpg"), snapFile = Path.Combine(dir, "snapshot.dmp");
 

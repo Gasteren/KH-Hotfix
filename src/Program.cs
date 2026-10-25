@@ -15,14 +15,14 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("KH 1.5+2.5 Hotfix")]
 [assembly: System.Reflection.AssemblyProduct("KHHotfix")]
-[assembly: System.Reflection.AssemblyVersion("1.4.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.4.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.5.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.5.0.0")]
 
 namespace KHHotfix
 {
     internal static class Program
     {
-        public const string Version = "1.4.0";
+        public const string Version = "1.5.0";
         public const string Title = "KH 1.5+2.5 Hotfix";
         public const string RestoreTool = "Start menu > KH Hotfix > Restore a KINGDOM HEARTS save";
         public const string ReportTool = "Start menu > KH Hotfix > Report a KINGDOM HEARTS bug";
@@ -143,9 +143,20 @@ namespace KHHotfix
         public static bool FixQuitCrash = true;
         public static int LoadingRescueSeconds = 10;
         public static string BugReportHotkey = "Ctrl+Alt+B";
+        // The project's report relay (relay\worker.js): forwards reports to the maintainer's Discord. Set by relay\Deploy-Relay.ps1.
+        public static string ReportRelay = "";
+        public static bool AutoReports = true;
         public static string DiscordBugReportWebhook = "";
         public static string DiscordLogWebhook = "";
         public static string DiscordBugReportTags = "";
+
+        // Where reports go: the maintainer's own webhooks when set (KHHotfix.local.ini), otherwise the report relay.
+        public static string BugReportTarget { get { return DiscordBugReportWebhook.Length > 0 ? DiscordBugReportWebhook : RelayEndpoint("bug"); } }
+
+        // Crash, freeze and session reports; empty with AutoReports=0.
+        public static string LogReportTarget { get { return !AutoReports ? "" : DiscordLogWebhook.Length > 0 ? DiscordLogWebhook : RelayEndpoint("log"); } }
+
+        static string RelayEndpoint(string kind) { return ReportRelay.Length > 0 ? ReportRelay.TrimEnd('/') + "/" + kind : ""; }
 
         public static string FilePath { get { return Path.Combine(Paths.Root, "KHHotfix.ini"); } }
         // Personal overrides on top of KHHotfix.ini (ignored by git, so a clone's defaults stay untouched).
@@ -185,6 +196,8 @@ namespace KHHotfix
                     case "fixquitcrash": FixQuitCrash = Bool(val, FixQuitCrash); break;
                     case "loadingrescueseconds": LoadingRescueSeconds = Int(val, LoadingRescueSeconds, 0, 3600); break;
                     case "bugreporthotkey": BugReportHotkey = val; break;
+                    case "reportrelay": ReportRelay = val.Trim('"', '\'').TrimEnd('/'); break;
+                    case "autoreports": AutoReports = Bool(val, AutoReports); break;
                     case "discordbugreportwebhook": DiscordBugReportWebhook = val.Trim('"', '\''); break;
                     case "discordlogwebhook": DiscordLogWebhook = val.Trim('"', '\''); break;
                     case "discordbugreporttags": DiscordBugReportTags = val; break;
@@ -283,7 +296,7 @@ namespace KHHotfix
 
         public void Clear() { items.Clear(); }
 
-        public static bool AutoReported { get { return Discord.IsWebhook(Settings.DiscordLogWebhook); } }
+        public static bool AutoReported { get { return Discord.IsWebhook(Settings.LogReportTarget); } }
 
         public List<string> Shown { get { return items.Where(i => Settings.DetailedMessages || !i.Detail).Select(i => i.Text).ToList(); } }
 

@@ -437,8 +437,8 @@ namespace KHHotfix
         }
     }
 
-    // Automatic reports to DiscordLogWebhook: crashes and freezes (with the crash report) and sessions in which the
-    // hotfix had to step in (lost sound, released loading screens, deleted saves, ...).
+    // Automatic reports to the maintainer (LogReportTarget): crashes and freezes (with the crash report) and sessions in
+    // which the hotfix had to step in (lost sound, released loading screens, deleted saves, ...).
     internal static class LogReport
     {
         public static Discord.Message Compose(string headline, string kind, string reportDir, IList<string> notices, string sessionLog, string gameName, SystemInfo sys)
@@ -497,23 +497,23 @@ namespace KHHotfix
             return m;
         }
 
-        // Sends the report and returns the line for the session summary (null when Discord reporting is off).
+        // Sends the report and returns the line for the session summary (null when reporting is off).
         public static string Send(string headline, string kind, string reportDir, IList<string> notices, string sessionLog, string gameName, string gameDir)
         {
-            string webhook = Settings.DiscordLogWebhook;
-            if (string.IsNullOrEmpty(webhook)) return null;
-            if (!Discord.IsWebhook(webhook)) { Log.Warn("DiscordLogWebhook is not a valid Discord webhook URL - nothing was sent"); return null; }
+            string target = Settings.LogReportTarget;
+            if (string.IsNullOrEmpty(target)) return null;
+            if (!Discord.IsWebhook(target)) { Log.Warn("Crash reports: " + Discord.Describe(target) + " is not a valid report address - nothing was sent"); return null; }
             Discord.Message m = Compose(headline, kind, reportDir, notices, sessionLog, gameName, SystemInfo.Collect(gameDir));
-            Discord.Result r = Discord.Send(webhook, m, 45000);
+            Discord.Result r = Discord.Send(target, m, 45000);
             if (r.Dropped.Count > 0) Log.Warn("Discord: left out (too large): " + string.Join(", ", r.Dropped));
             if (r.Ok)
             {
-                Log.Info("Report sent to Discord (" + Discord.Describe(webhook) + ")" + (r.Link != null ? ": " + r.Link : ""));
+                Log.Info("Report sent to Discord (" + Discord.Describe(target) + ")" + (r.Link != null ? ": " + r.Link : ""));
                 if (reportDir != null) Reporting.MarkSent(reportDir, r);
                 return kind == "notes" ? "A report about this session was sent to Discord." : "The " + (kind == "crash" ? "crash" : "freeze") + " report was sent to Discord automatically.";
             }
-            Log.Warn("Sending the report to Discord failed (" + Discord.Describe(webhook) + "): " + r.Error);
-            return "Could not send the report to Discord: " + r.Error + (reportDir != null ? " It is saved in " + reportDir + "; you can send it with Ctrl+Alt+B or Start menu > KH Hotfix > Report a KINGDOM HEARTS bug." : "");
+            Log.Warn("Sending the report to Discord failed (" + Discord.Describe(target) + "): " + r.Error);
+            return "Could not send the report to Discord: " + r.Error + (reportDir != null ? " It is saved in " + reportDir + "; you can send it with Ctrl+Alt+B or " + Program.ReportTool + "." : "");
         }
     }
 }

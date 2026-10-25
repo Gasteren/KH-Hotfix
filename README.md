@@ -20,6 +20,8 @@ Game files are not changed, and the uninstaller reverts everything.
 - Tells you when the game lost its sound because your headphones or speakers disconnected (restart the game to get
   it back).
 - Closes a frozen game after backing up your saves.
+- Sends crash reports and your bug reports to the developer, so problems get fixed (logs and system info; your
+  Windows user name, PC name and Steam ID are removed). `AutoReports=0` in `KHHotfix.local.ini` stops the automatic ones.
 - **Ctrl+Alt+B** reports a bug with a screenshot. **Ctrl+Alt+K** backs up your saves and closes a frozen game.
 
 ## Install

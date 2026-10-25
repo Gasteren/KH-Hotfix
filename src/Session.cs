@@ -163,7 +163,8 @@ namespace KHHotfix
                 if (bugKey) Log.Info("Bug report hotkey active: " + Settings.BugReportHotkey);
                 else Log.Warn("Bug report hotkey unavailable: " + Settings.BugReportHotkey);
             }
-            Log.Info("Discord: bug reports " + Discord.Describe(Settings.DiscordBugReportWebhook) + ", crash and session reports " + Discord.Describe(Settings.DiscordLogWebhook));
+            Log.Info("Discord: bug reports " + Discord.Describe(Settings.BugReportTarget) + ", crash and session reports "
+                + (Settings.AutoReports ? Discord.Describe(Settings.LogReportTarget) : "off (AutoReports=0)"));
             hotkey.Pressed += delegate(int id) { if (id == 1) OnPanic(); else if (id == 2) OnBugReport(); };
             if (bugKey && Paths.OnceFlag("bug-report-hint"))
                 Alert("Found a bug?", "Press " + Settings.BugReportHotkey + " while playing to report it with a screenshot.");
@@ -431,10 +432,10 @@ namespace KHHotfix
             catch (Exception ex) { Log.Error("Could not open the bug report window: " + ex.Message); }
         }
 
-        // Crash and freeze reports, and sessions in which the hotfix had to step in, go to DiscordLogWebhook.
+        // Crash and freeze reports, and sessions in which the hotfix had to step in, go to the maintainer (LogReportTarget).
         void SendLogReport(string report)
         {
-            if (string.IsNullOrEmpty(Settings.DiscordLogWebhook)) return;
+            if (string.IsNullOrEmpty(Settings.LogReportTarget)) return;
             List<TrackedProcess> games = done.Concat(live.Values).Where(p => p.IsGame).OrderByDescending(p => p.FirstSeenUtc).ToList();
             if (report == null && (postNotices.Count == 0 || games.Count == 0)) return;
             string kind = report == null ? "notes" : reportKind;

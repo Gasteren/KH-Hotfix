@@ -96,6 +96,8 @@ if (-not $InPlace -and -not $isClone -and -not $here.Equals($target, [StringComp
     Write-Step "Installing to $target"
     if ((Get-RunningHotfix $target).Count -gt 0) { throw 'KINGDOM HEARTS is running through the hotfix. Quit the game, then run Install.cmd again.' }
     if (Copy-HotfixFiles $here $target) { Write-Ok 'Copied' } else { Write-Ok 'Updated (your KHHotfix.ini settings were kept)' }
+    $merged = @(Merge-LocalIni $here $target)
+    if ($merged.Count -gt 0) { Write-Ok ('Settings from KHHotfix.local.ini added: ' + ($merged -join ', ')) }
     Write-Info 'The downloaded folder is not needed any more after this.'
     $pass = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $target 'Install-KHHotfix.ps1'), '-InPlace', '-InstallDir', $target)
     foreach ($k in $PSBoundParameters.Keys) {
@@ -119,6 +121,15 @@ catch {
 }
 if ($r.Code -ne 0) { Write-Host $r.Output; throw 'The hotfix self-test failed. Nothing on your PC was changed.' }
 Write-Ok 'KHHotfix.exe and KHHotfixCli.exe built; self-test passed'
+
+# Only checks the webhooks (nothing is posted). Exit code 3: Discord reporting is not set up.
+$r = Invoke-Cli @('--discord-test')
+if ($r.Code -ne 3) {
+    Write-Step 'Discord reporting'
+    $r.Output -split "`r?`n" | Where-Object { $_ } | ForEach-Object { Write-Info $_ }
+    if ($r.Code -eq 0) { Write-Ok 'Bug reports and crash reports will be posted to Discord' }
+    else { Write-Warn2 'Discord reporting does not work yet (see above). The game and the rest of the hotfix are not affected.' }
+}
 
 $state = Get-HotfixState
 if (-not $state.InstalledAt) { $state.InstalledAt = (Get-Date).ToString('s') }
@@ -213,7 +224,7 @@ if (-not $NoShortcuts) {
     try {
         $state.Shortcuts = New-HotfixShortcuts $here $kh.Path $ShortcutRoot
         Save-HotfixState $state
-        Write-Ok "Start menu > $($script:ShortcutFolderName): restore a save, diagnostics, uninstall, folder"
+        Write-Ok "Start menu > $($script:ShortcutFolderName): report a bug, restore a save, diagnostics, uninstall, folder"
     }
     catch { Write-Warn2 "Could not create Start menu shortcuts: $($_.Exception.Message)" }
 }
@@ -229,6 +240,7 @@ Write-Host @"
      Frame Rate   : 60                    (the engine is crash-prone above 60 FPS)
      Refresh Rate : ON
 
-   While playing: Ctrl+Alt+K backs up your saves and force-closes a frozen game.
-   Restore a save, diagnostics, uninstall: Start menu > KH Hotfix (or the .cmd files in the folder above).
+   While playing: Ctrl+Alt+B reports a bug (with a screenshot of the game).
+                  Ctrl+Alt+K backs up your saves and force-closes a frozen game.
+   Report a bug, restore a save, diagnostics, uninstall: Start menu > KH Hotfix (or the .cmd files in the folder above).
 "@

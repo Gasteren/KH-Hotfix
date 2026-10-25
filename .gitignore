@@ -10,5 +10,8 @@
 *.pdb
 *.khhotfix-tmp
 
-# Personal settings that override KHHotfix.ini
+# Personal settings that override KHHotfix.ini (may contain private Discord webhook URLs)
 KHHotfix.local.ini
+
+# Files prepared for sharing privately (e.g. a KHHotfix.local.ini with Discord webhooks)
+/Share/

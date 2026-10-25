@@ -15,14 +15,14 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("KH 1.5+2.5 Hotfix")]
 [assembly: System.Reflection.AssemblyProduct("KHHotfix")]
-[assembly: System.Reflection.AssemblyVersion("1.2.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.2.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.3.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.3.0.0")]
 
 namespace KHHotfix
 {
     internal static class Program
     {
-        public const string Version = "1.2.0";
+        public const string Version = "1.3.0";
         public const string Title = "KH 1.5+2.5 Hotfix";
 #if CLI
         public static readonly bool Cli = true;
@@ -33,6 +33,12 @@ namespace KHHotfix
         [STAThread]
         private static int Main(string[] args)
         {
+            try
+            {
+                // Real pixel coordinates for game screenshots and a sharp report window on scaled displays.
+                Native.SetProcessDPIAware();
+            }
+            catch { }
             try
             {
                 Application.EnableVisualStyles();
@@ -133,6 +139,10 @@ namespace KHHotfix
         public static string ExtraGameArgs = "";
         public static bool FixQuitCrash = true;
         public static int LoadingRescueSeconds = 10;
+        public static string BugReportHotkey = "Ctrl+Alt+B";
+        public static string DiscordBugReportWebhook = "";
+        public static string DiscordLogWebhook = "";
+        public static string DiscordBugReportTags = "";
 
         public static string FilePath { get { return Path.Combine(Paths.Root, "KHHotfix.ini"); } }
         // Personal overrides on top of KHHotfix.ini (ignored by git, so a clone's defaults stay untouched).
@@ -170,6 +180,10 @@ namespace KHHotfix
                     case "extragameargs": ExtraGameArgs = val; break;
                     case "fixquitcrash": FixQuitCrash = Bool(val, FixQuitCrash); break;
                     case "loadingrescueseconds": LoadingRescueSeconds = Int(val, LoadingRescueSeconds, 0, 3600); break;
+                    case "bugreporthotkey": BugReportHotkey = val; break;
+                    case "discordbugreportwebhook": DiscordBugReportWebhook = val.Trim('"', '\''); break;
+                    case "discordlogwebhook": DiscordLogWebhook = val.Trim('"', '\''); break;
+                    case "discordbugreporttags": DiscordBugReportTags = val; break;
                 }
             }
         }

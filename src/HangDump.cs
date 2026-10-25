@@ -17,25 +17,37 @@ namespace KHHotfix
 
         public static string Write(TrackedProcess t, string reason)
         {
-            IntPtr h = Native.OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, t.Pid);
-            if (h == IntPtr.Zero) { Log.Warn("Cannot open " + t.Label + " for a freeze dump (error " + Marshal.GetLastWin32Error() + ")"); return null; }
             try
             {
                 Directory.CreateDirectory(Paths.CrashDumps);
                 string file = Path.Combine(Paths.CrashDumps, t.Name + " - " + reason + " - " + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".dmp");
+                string error = WriteFile(t.Pid, file);
+                if (error == null) { Log.Info("Freeze dump of " + t.Label + " written: " + file); return file; }
+                Log.Warn("Freeze dump of " + t.Label + " failed (" + error + ")");
+                return null;
+            }
+            catch (Exception ex) { Log.Warn("Freeze dump of " + t.Label + " failed: " + ex.Message); return null; }
+        }
+
+        // Writes a snapshot of any running process to `file`. Returns null on success, otherwise the reason it failed.
+        public static string WriteFile(int pid, string file)
+        {
+            IntPtr h = Native.OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid);
+            if (h == IntPtr.Zero) return "cannot open process " + pid + ", error " + Marshal.GetLastWin32Error();
+            try
+            {
                 bool ok;
                 int err;
                 using (var fs = new FileStream(file, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
                 {
-                    ok = MiniDumpWriteDump(h, (uint)t.Pid, fs.SafeFileHandle, DumpType, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                    ok = MiniDumpWriteDump(h, (uint)pid, fs.SafeFileHandle, DumpType, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
                     err = Marshal.GetLastWin32Error();
                 }
-                if (ok) { Log.Info("Freeze dump of " + t.Label + " written: " + file); return file; }
-                Log.Warn("Freeze dump of " + t.Label + " failed (error " + err + ")");
+                if (ok) return null;
                 try { File.Delete(file); } catch { }
-                return null;
+                return "error " + err;
             }
-            catch (Exception ex) { Log.Warn("Freeze dump of " + t.Label + " failed: " + ex.Message); return null; }
+            catch (Exception ex) { return ex.Message; }
             finally { Native.CloseHandle(h); }
         }
     }

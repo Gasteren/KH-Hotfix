@@ -91,6 +91,70 @@ namespace KHHotfix
         [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(IntPtr hwnd, int id, uint mods, uint vk);
         [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hwnd, int id);
 
+        // ---- bug reports: game window, screenshots, focus ---------------------------------------
+        [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+
+        [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT r);
+        [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out RECT r, int size);
+        [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+        [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hwnd);
+        [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hwnd);
+        [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+        [DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(int pid);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr wParam, string lParam);
+        [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+        [DllImport("shell32.dll")] static extern int SHQueryUserNotificationState(out int state);
+
+        public static bool IsHung(IntPtr hwnd) { return IsHungAppWindow(hwnd); }
+
+        // Window bounds as drawn on screen (without the invisible resize border of Windows 10/11).
+        public static bool WindowBounds(IntPtr hwnd, out RECT r)
+        {
+            try { if (DwmGetWindowAttribute(hwnd, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, out r, Marshal.SizeOf(typeof(RECT))) == 0) return true; }
+            catch (DllNotFoundException) { }
+            return GetWindowRect(hwnd, out r);
+        }
+
+        // The largest visible top-level window of a process (the game window), or IntPtr.Zero.
+        public static IntPtr MainWindowOf(int pid)
+        {
+            IntPtr best = IntPtr.Zero;
+            long bestArea = 0;
+            EnumWindowsProc cb = delegate(IntPtr hwnd, IntPtr lp)
+            {
+                int owner;
+                GetWindowThreadProcessId(hwnd, out owner);
+                if (owner != pid || !IsWindowVisible(hwnd)) return true;
+                RECT r;
+                if (!GetWindowRect(hwnd, out r)) return true;
+                long area = (long)(r.Right - r.Left) * (r.Bottom - r.Top);
+                if (area > bestArea) { bestArea = area; best = hwnd; }
+                return true;
+            };
+            EnumWindows(cb, IntPtr.Zero);
+            GC.KeepAlive(cb);
+            return best;
+        }
+
+        // True while a Direct3D game runs in exclusive fullscreen, where switching windows can crash KH.
+        public static bool ExclusiveFullscreen()
+        {
+            int state;
+            try { return SHQueryUserNotificationState(out state) == 0 && state == 3 /* QUNS_RUNNING_D3D_FULL_SCREEN */; }
+            catch (EntryPointNotFoundException) { return false; }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct MEMORYSTATUSEX { public uint Length, MemoryLoad; public ulong TotalPhys, AvailPhys, TotalPageFile, AvailPageFile, TotalVirtual, AvailVirtual, AvailExtendedVirtual; }
+        [DllImport("kernel32.dll")] static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX m);
+
+        public static ulong TotalMemory()
+        {
+            var m = new MEMORYSTATUSEX();
+            m.Length = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX));
+            return GlobalMemoryStatusEx(ref m) ? m.TotalPhys : 0;
+        }
+
         // ---- display --------------------------------------------------------------------------
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         public struct DISPLAY_DEVICE

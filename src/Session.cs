@@ -64,6 +64,9 @@ namespace KHHotfix
         bool busy, guarding, finishing, panicked;
         NotifyIcon tray;
         int tick;
+        Process bugForm;                       // the open "Report a bug" window
+        string pendingBug;                     // report captured in exclusive fullscreen; its window opens once that is safe
+        string reportKind = "crash", reportHeadline = "Crash report";
 
         public Session(string exe, string gameArgs, DateTime startLocal)
         {
@@ -127,6 +130,7 @@ namespace KHHotfix
                         + "Otherwise use Steam > Properties > Installed Files > Verify integrity.");
                 Log.Info("Session finished. Backups written this session: " + saves.SnapshotsTaken);
                 if (report != null) { try { File.Copy(Log.FilePath, Path.Combine(report, "hotfix-session.log"), true); } catch { } }
+                Step("Discord report", delegate { SendLogReport(report); });
                 Ui.Notice("KINGDOM HEARTS session summary:", postNotices, MessageBoxIcon.Warning);
             }
             return rootTracked != null && rootTracked.Exited ? unchecked((int)rootTracked.ExitCode) : 0;
@@ -149,10 +153,20 @@ namespace KHHotfix
             var hotkey = new HotkeyWindow();
             if (Settings.PanicHotkey.Length > 0)
             {
-                if (hotkey.Register(Settings.PanicHotkey)) Log.Info("Panic hotkey active: " + Settings.PanicHotkey);
+                if (hotkey.Register(1, Settings.PanicHotkey)) Log.Info("Panic hotkey active: " + Settings.PanicHotkey);
                 else Log.Warn("Panic hotkey unavailable: " + Settings.PanicHotkey);
             }
-            hotkey.Pressed += OnPanic;
+            bool bugKey = false;
+            if (Settings.BugReportHotkey.Length > 0)
+            {
+                bugKey = hotkey.Register(2, Settings.BugReportHotkey);
+                if (bugKey) Log.Info("Bug report hotkey active: " + Settings.BugReportHotkey);
+                else Log.Warn("Bug report hotkey unavailable: " + Settings.BugReportHotkey);
+            }
+            Log.Info("Discord: bug reports " + Discord.Describe(Settings.DiscordBugReportWebhook) + ", crash and session reports " + Discord.Describe(Settings.DiscordLogWebhook));
+            hotkey.Pressed += delegate(int id) { if (id == 1) OnPanic(); else if (id == 2) OnBugReport(); };
+            if (bugKey && Paths.OnceFlag("bug-report-hint"))
+                Alert("Found a bug?", "Press " + Settings.BugReportHotkey + " while playing to report it with a screenshot.");
             var timer = new System.Windows.Forms.Timer();
             timer.Interval = 1000;
             timer.Tick += delegate { SafeTick(); };
@@ -214,6 +228,12 @@ namespace KHHotfix
             Discover();
             ApplyFixes();
             PollExits();
+            if (pendingBug != null && (!live.Values.Any(t => t.IsGame) || !Native.ExclusiveFullscreen()))
+            {
+                string bugDir = pendingBug;
+                pendingBug = null;
+                LaunchBugForm(bugDir);
+            }
             Watch(now);
             if (tick % 2 == 0) saves.Poll();
             if (live.Count > 0) { idleSinceUtc = DateTime.MinValue; return; }
@@ -377,6 +397,59 @@ namespace KHHotfix
             postNotices.Add("You pressed the panic hotkey (" + Settings.PanicHotkey + "). The game was closed after your saves were backed up.");
         }
 
+        // Ctrl+Alt+B: capture the moment right away (screenshot, game state, snapshot), then open the report window.
+        void OnBugReport()
+        {
+            if (finishing) return;
+            try { if (bugForm != null && !bugForm.HasExited) { Log.Info("Bug report hotkey: the report window is already open"); return; } }
+            catch { }
+            if (pendingBug != null) return;
+            TrackedProcess game = live.Values.Where(t => t.IsGame && t.Handle != IntPtr.Zero).OrderByDescending(t => t.FirstSeenUtc).FirstOrDefault();
+            Log.Info("Bug report hotkey pressed" + (game != null ? " while " + game.Label + " runs" : ""));
+            string dir;
+            try { dir = BugReport.Prepare(game == null ? 0 : game.Pid, game == null ? null : game.ImagePath, gameDir, Log.FilePath, "hotkey " + Settings.BugReportHotkey); }
+            catch (Exception ex) { Log.Error("Bug report could not be prepared: " + ex); return; }
+            if (game != null && Native.ExclusiveFullscreen())
+            {
+                pendingBug = dir;
+                Alert("Bug report started", "The screenshot is saved. The report window opens when you leave the game "
+                    + "(switching windows in exclusive fullscreen can crash KINGDOM HEARTS - Borderless Windowed avoids that).");
+                return;
+            }
+            LaunchBugForm(dir);
+        }
+
+        void LaunchBugForm(string dir)
+        {
+            try
+            {
+                Native.AllowSetForegroundWindow(-1);   // ASFW_ANY: the report window may take the focus from the game
+                string exe = Path.Combine(Paths.Root, "KHHotfix.exe");
+                bugForm = Process.Start(new ProcessStartInfo(exe, "--report-bug \"" + dir + "\"") { UseShellExecute = false, WorkingDirectory = Paths.Root });
+                Log.Info("Bug report window opened for " + dir);
+            }
+            catch (Exception ex) { Log.Error("Could not open the bug report window: " + ex.Message); }
+        }
+
+        // Crash and freeze reports, and sessions in which the hotfix had to step in, go to DiscordLogWebhook.
+        void SendLogReport(string report)
+        {
+            if (string.IsNullOrEmpty(Settings.DiscordLogWebhook)) return;
+            List<TrackedProcess> games = done.Concat(live.Values).Where(p => p.IsGame).OrderByDescending(p => p.FirstSeenUtc).ToList();
+            if (report == null && (postNotices.Count == 0 || games.Count == 0)) return;
+            string kind = report == null ? "notes" : reportKind;
+            string headline = report == null ? FirstSentence(postNotices[0]) : reportHeadline;
+            string line = LogReport.Send(headline, kind, report, new List<string>(postNotices), Log.FilePath,
+                games.Count > 0 ? BugReport.GameTitle(games[0].Name) : null, gameDir);
+            if (line != null) postNotices.Add(line);
+        }
+
+        static string FirstSentence(string s)
+        {
+            int i = s.IndexOf(". ", StringComparison.Ordinal);
+            return TextUtil.Clip(i > 0 ? s.Substring(0, i) : s, 150);
+        }
+
         string CollectReport()
         {
             List<TrackedProcess> procs = done.Concat(live.Values).OrderBy(p => p.FirstSeenUtc).ToList();
@@ -397,6 +470,35 @@ namespace KHHotfix
                 postNotices.Add("Windows Controlled Folder Access BLOCKED the game from writing its saves during this session - that is why saving fails. "
                     + "Run Install.cmd again and answer Y when it offers to allow the game, or allow the KH executables in Windows Security > Ransomware protection.");
             if (crashed.Count == 0 && killed.Count == 0 && dumps.Count == 0 && wer.Count == 0 && events.Length == 0 && cfa.Length == 0) return null;
+
+            // Headline and kind of the report for Discord.
+            if (crashed.Count > 0)
+            {
+                reportKind = "crash";
+                TrackedProcess c = crashed[0];
+                reportHeadline = c.Name + " crashed: 0x" + c.ExitCode.ToString("X8") + CrashCodes.Describe(c.ExitCode) + (crashed.Count > 1 ? " (and " + (crashed.Count - 1) + " more)" : "");
+            }
+            else if (killed.Count > 0)
+            {
+                reportKind = "freeze";
+                TrackedProcess k = killed.FirstOrDefault(x => x.IsGame) ?? killed[0];
+                reportHeadline = k.KillReason == "panic hotkey" ? k.Name + " was closed with the panic hotkey" : k.Name + " " + k.KillReason;
+            }
+            else if (dumps.Any(n => Path.GetFileName(n).IndexOf("loading screen stuck", StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                reportKind = "freeze";
+                reportHeadline = LoadingGuard.GameName + " stayed on a loading screen (snapshot taken)";
+            }
+            else if (dumps.Count > 0 || wer.Count > 0 || events.Length > 0)
+            {
+                reportKind = "crash";
+                reportHeadline = "Windows recorded a crash of KINGDOM HEARTS";
+            }
+            else
+            {
+                reportKind = "notes";
+                reportHeadline = "Saving was blocked by Windows Controlled Folder Access";
+            }
 
             string dir = Path.Combine(Paths.Reports, DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture));
             Directory.CreateDirectory(dir);

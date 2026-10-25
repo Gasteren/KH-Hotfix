@@ -55,6 +55,8 @@ try {
     $pattern = (@($needles | Where-Object { $_ -and "$_".Length -ge 4 }) | ForEach-Object { [regex]::Escape("$_") }) -join '|'
     $leaks = @($files | Select-String -Pattern $pattern -List)
     Expect ($leaks.Count -eq 0) "no user name, PC name or Steam account of this PC in the ZIP$(if ($leaks) { ': ' + (($leaks | ForEach-Object { $_.Filename }) -join ', ') })"
+    $hooks = @($files | Select-String -Pattern 'discord(app)?\.com/api(/v\d+)?/webhooks/\d+/[A-Za-z0-9_-]{20,}' -List)
+    Expect ($hooks.Count -eq 0 -and -not ($files | Where-Object { $_.Name -eq 'KHHotfix.local.ini' })) "no Discord webhook URL or KHHotfix.local.ini in the ZIP$(if ($hooks) { ': ' + (($hooks | ForEach-Object { $_.Filename }) -join ', ') })"
     $cmds = @($files | Where-Object { $_.Extension -eq '.cmd' })
     $lfOnly = @($cmds | Where-Object { $b = [IO.File]::ReadAllBytes($_.FullName); $bad = $false; for ($i = 0; $i -lt $b.Length; $i++) { if ($b[$i] -eq 10 -and ($i -eq 0 -or $b[$i - 1] -ne 13)) { $bad = $true; break } }; $bad })
     Expect ($cmds.Count -ge 5 -and $lfOnly.Count -eq 0) "all $($cmds.Count) .cmd files have Windows line endings"
@@ -70,6 +72,8 @@ try {
     Write-Host 'First install'
     $inst = Join-Path $work 'Installed'
     $menu = Join-Path $work 'StartMenu'
+    # Discord settings shared privately: a KHHotfix.local.ini placed next to Install.cmd (nothing listens on port 9)
+    Set-Content -LiteralPath (Join-Path $src 'KHHotfix.local.ini') -Value 'DiscordLogWebhook=http://127.0.0.1:9/api/webhooks/1/secret-token-111' -Encoding ASCII
     $installArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $src 'Install-KHHotfix.ps1'), '-InstallDir', $inst, '-ShortcutRoot', $menu, '-SkipSteam', '-NoNvidia', '-NoClipboard')
     $r = Invoke-Quiet { '' | powershell.exe @installArgs }
     Expect ($r.Code -eq 0) "installer exit code 0 (got $($r.Code))"
@@ -80,20 +84,29 @@ try {
     $st = Get-Content -Raw (Join-Path $inst 'State\install.json') | ConvertFrom-Json
     Expect ($st.Managed -eq $true) 'install is recorded as managed'
     $lnks = @(Get-ChildItem -LiteralPath (Join-Path $menu 'KH Hotfix') -Filter *.lnk -ErrorAction SilentlyContinue)
-    Expect ($lnks.Count -eq 4) "4 Start menu shortcuts (found $($lnks.Count))"
+    Expect ($lnks.Count -eq 5) "5 Start menu shortcuts (found $($lnks.Count))"
     $ws = New-Object -ComObject WScript.Shell
     Expect ($ws.CreateShortcut((Join-Path $menu 'KH Hotfix\Restore a KINGDOM HEARTS save.lnk')).TargetPath -eq (Join-Path $inst 'Restore.cmd')) 'Restore shortcut points to the installed copy'
+    $bugLnk = $ws.CreateShortcut((Join-Path $menu 'KH Hotfix\Report a KINGDOM HEARTS bug.lnk'))
+    Expect ($bugLnk.TargetPath -eq (Join-Path $inst 'KHHotfix.exe') -and $bugLnk.Arguments -eq '--report-bug') 'Report a bug shortcut opens the report window of the installed copy'
     Expect ($r.Out -match ('Installed in ' + [regex]::Escape($inst))) 'installer reports the install folder'
     Expect ($r.Out -match [regex]::Escape('"' + (Join-Path $inst 'KHHotfix.exe') + '" %command%')) 'launch option shown for the installed copy'
+    $localIni = Join-Path $inst 'KHHotfix.local.ini'
+    Expect ((Test-Path $localIni) -and (Get-Content -Raw $localIni) -match 'DiscordLogWebhook=http://127\.0\.0\.1:9/api/webhooks/1/secret-token-111') 'shared KHHotfix.local.ini settings added to the installation'
+    Expect ($r.Out -match 'Settings from KHHotfix\.local\.ini added: DiscordLogWebhook' -and $r.Out -match 'Discord reporting does not work yet' -and $r.Out -notmatch 'secret-token') 'installer checks Discord reporting and never shows the webhook token'
 
     Write-Host 'Update from a new download'
     Add-Content -LiteralPath (Join-Path $inst 'KHHotfix.ini') -Value '; my own setting'
+    Add-Content -LiteralPath $localIni -Value 'TargetRefreshHz=0'
+    Set-Content -LiteralPath (Join-Path $src 'KHHotfix.local.ini') -Encoding ASCII -Value @('DiscordLogWebhook=http://127.0.0.1:9/api/webhooks/1/secret-token-111', 'DiscordBugReportWebhook=http://127.0.0.1:9/api/webhooks/2/secret-token-222')
     $exeTime = (Get-Item "$inst\KHHotfix.exe").LastWriteTimeUtc
     Start-Sleep -Seconds 1
     $r = Invoke-Quiet { '' | powershell.exe @installArgs }
     Expect ($r.Code -eq 0) "second install exit code 0 (got $($r.Code))"
     Expect ((Get-Content -Raw (Join-Path $inst 'KHHotfix.ini')) -match 'my own setting') 'KHHotfix.ini settings kept'
     Expect ((Get-Item "$inst\KHHotfix.exe").LastWriteTimeUtc -gt $exeTime) 'binaries rebuilt'
+    $local = @(Get-Content $localIni)
+    Expect ($local -contains 'TargetRefreshHz=0' -and @($local -match '^DiscordLogWebhook=').Count -eq 1 -and $local -contains 'DiscordBugReportWebhook=http://127.0.0.1:9/api/webhooks/2/secret-token-222' -and $r.Out -match '(?m)Settings from KHHotfix\.local\.ini added: DiscordBugReportWebhook\r?$') 'update: own KHHotfix.local.ini settings kept, new shared settings added once'
 
     Write-Host 'Diagnostics from the installed copy'
     $r = Invoke-Quiet { '' | powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $inst 'Diagnose-KH.ps1') }

@@ -20,8 +20,8 @@ No game files are changed, no administrator rights are needed, and the uninstall
    **Screen Mode: Borderless Windowed**, **Frame Rate: 60**, **Refresh Rate: ON**.
 
 The hotfix installs itself to `%LOCALAPPDATA%\KH-Hotfix`, so you can delete the downloaded files afterwards.
-The Start menu folder **KH Hotfix** contains *Restore a KINGDOM HEARTS save*, *KH Hotfix diagnostics*,
-*Uninstall KH Hotfix* and the hotfix folder.
+The Start menu folder **KH Hotfix** contains *Report a KINGDOM HEARTS bug*, *Restore a KINGDOM HEARTS save*,
+*KH Hotfix diagnostics*, *Uninstall KH Hotfix* and the hotfix folder.
 
 - **Update:** download the ZIP again and run `Install.cmd`. Your settings and backups are kept.
 - **Uninstall:** Start menu > KH Hotfix > *Uninstall KH Hotfix*.
@@ -36,9 +36,10 @@ The Start menu folder **KH Hotfix** contains *Restore a KINGDOM HEARTS save*, *K
 | "Save data is corrupt" or lost progress | Quit the game, run *Restore a KINGDOM HEARTS save* and pick the newest version that is not marked *damaged*. |
 | "Failed to save game data" | Run *KH Hotfix diagnostics*. If Controlled Folder Access (ransomware protection) is on, run `Install.cmd` again and answer **Y** when it offers to allow the game. |
 | The game freezes | Press **Ctrl+Alt+K**: your saves are backed up and the game is closed. |
+| You found a bug (glitch, freeze, wrong sound, anything odd) | Press **Ctrl+Alt+B** while it is on screen, describe it and click *Send report*. See [Reporting bugs](#reporting-bugs). |
 | No sound any more (often after Bluetooth headphones dropped out) | The game cannot get its sound back once its audio output disappeared. Save, then restart the game. To prevent it, keep a second audio output enabled: see [Sound and endless loading screens](#sound-and-endless-loading-screens). |
 | A loading screen or the end of a cutscene never finishes (KH1, the game keeps running) | Wait: the hotfix releases it, a loading screen at once and a cutscene within a few seconds when the game has lost its sound (see the row above), otherwise a loading screen after 10 seconds. If it is still stuck after 2 minutes, the cause is a different one: a snapshot was saved, please report it like a crash. |
-| The game crashed | Your saves were backed up. `Reports\<date>\summary.txt` in the hotfix folder contains a crash analysis; please share it in a [crash report issue](https://github.com/Gasteren/KH-Hotfix/issues/new?template=crash-report.md) so the crash can be fixed in code. |
+| The game crashed | Your saves were backed up. With [Discord reporting](#reporting-bugs) set up, the crash report was sent automatically. Otherwise `Reports\<date>\summary.txt` in the hotfix folder contains a crash analysis; please share it in a [crash report issue](https://github.com/Gasteren/KH-Hotfix/issues/new?template=crash-report.md) so the crash can be fixed in code. |
 | The installer says Windows blocked the program | Smart App Control or an antivirus blocks unsigned programs. The hotfix is compiled on your PC from the source code in `src\`; allow it in your antivirus or don't use the hotfix. |
 | The game closes immediately (code `0x00000035`) | The game is shared through Steam Families and another family member is playing it. |
 
@@ -87,10 +88,12 @@ Steam starts the game through `KHHotfix.exe` (launch option `"<hotfix folder>\KH
    game, and before launch the hotfix warns once when only one audio output is enabled (see below).
 8. **Freeze watchdog** (fallback): a game process that closed its window but never exits is closed after 20 seconds; a
    window that stays *Not responding* for 2 minutes is closed too. Saves are backed up first.
-8. **Panic hotkey Ctrl+Alt+K**: backs up the saves and closes a frozen game, even in fullscreen.
-9. **Crash reports with analysis**: decoded exit codes, the game's own crash dump with an automatic call-stack analysis
-   and crash signature (no debugger needed), Windows Error Reporting data and event-log entries in `Reports\<date>\`.
-10. **Never blocks playing**: if the hotfix itself fails, the game is started normally.
+9. **Panic hotkey Ctrl+Alt+K**: backs up the saves and closes a frozen game, even in fullscreen.
+10. **Crash reports with analysis**: decoded exit codes, the game's own crash dump with an automatic call-stack analysis
+    and crash signature (no debugger needed), Windows Error Reporting data and event-log entries in `Reports\<date>\`.
+11. **Bug reports with one hotkey (Ctrl+Alt+B)**, and crash reports sent to Discord automatically when that is set up
+    (see [Reporting bugs](#reporting-bugs)).
+12. **Never blocks playing**: if the hotfix itself fails, the game is started normally.
 
 ## Playing above 60 FPS and helping fix the remaining crashes
 
@@ -101,7 +104,8 @@ location is known, and the hotfix now records exactly that. To play without the 
 1. In `KHHotfix.ini` (Start menu > KH Hotfix > KH Hotfix folder) set `TargetRefreshHz=0`.
 2. Run `Install.cmd -Fps 0` from that folder (removes the NVIDIA 60 FPS cap).
 3. Pick any settings in the game. Your saves stay protected by the backups and auto-repair.
-4. When the game crashes, open a [crash report issue](https://github.com/Gasteren/KH-Hotfix/issues/new?template=crash-report.md)
+4. When the game crashes, the crash report is posted automatically if [Discord reporting](#reporting-bugs) is set up.
+   Otherwise open a [crash report issue](https://github.com/Gasteren/KH-Hotfix/issues/new?template=crash-report.md)
    and paste `Reports\<date>\summary.txt`. Crashes with the same *Signature* line are the same bug.
 
 To go back to the safe limits, set `TargetRefreshHz=60` again and run `Install.cmd`.
@@ -119,6 +123,44 @@ is restarted, and in KH1 loading screens and cutscene endings wait forever for s
   The hotfix warns once before launch when only one output is enabled (`KHHotfixCli.exe --audio-devices` lists them).
 - **When it happens:** the hotfix shows a notification, keeps KH1's loading screens and cutscenes going, and tells you
   in the session summary. Save at the next save point, then restart the game to get the sound back.
+
+## Reporting bugs
+
+Press **Ctrl+Alt+B** while playing, or use Start menu > KH Hotfix > *Report a KINGDOM HEARTS bug*. The hotfix captures
+the moment right away: a screenshot of the game, what the game was doing (for KH1 its loading and sound state) and a
+technical snapshot. Then a window opens where you pick the game and the kind of problem and describe what happened.
+*Send report* posts it to the Discord server of whoever gave you the hotfix, if they set that up. Otherwise *Save report*
+keeps it in `Reports\bug-<date>\` for a GitHub issue. In exclusive fullscreen the window opens once you leave the game,
+because switching windows there can crash KH; Borderless Windowed avoids that.
+
+Crashes, freezes and sessions in which the hotfix had to step in (lost sound, released loading screens, a deleted save)
+are posted automatically after the session, with the logs and the crash analysis. This also only happens when Discord
+reporting is set up.
+
+**What is sent:** your description, the screenshot and the session log. It also includes system information: Windows,
+CPU, GPU and driver, RAM, display, audio outputs, game build and hotfix settings. If ticked, the technical snapshot is
+sent too. Your Windows user name, PC name and Steam ID are removed from the text, and reports from the same PC carry an
+anonymous tag such as `PC-1A2B`. The technical snapshot (a minidump: part of the game's memory) is sent as it is; untick
+it if you prefer.
+
+### Setting up Discord reporting (for whoever shares the hotfix)
+
+1. In your Discord server create a **forum channel** for bug reports (each report becomes its own post) and a channel
+   for the automatic crash reports (forum or text channel). In each: *Edit Channel* > *Integrations* > *Webhooks* >
+   *New Webhook* > *Copy Webhook URL*.
+2. Create `KHHotfix.local.ini` in the hotfix folder:
+   ```ini
+   DiscordBugReportWebhook=https://discord.com/api/webhooks/...
+   DiscordLogWebhook=https://discord.com/api/webhooks/...
+   ```
+   `KHHotfixCli.exe --discord-test` checks both webhooks; `--discord-test --send` posts a test message to each.
+3. Send that `KHHotfix.local.ini` **privately** to your players. They put it next to `Install.cmd` in the extracted
+   download before running it. The installer adds the settings to their installation; on later updates their own
+   settings stay.
+
+**Keep webhook URLs private.** Anyone with the URL can post to that channel and delete the webhook. Never put them in
+`KHHotfix.ini` or on GitHub; `KHHotfix.local.ini` is ignored by git. If one leaks, delete the webhook in Discord and
+create a new one. If the forum requires tags, turn that off or put the tag ids in `DiscordBugReportTags`.
 
 ## Changes made to your PC
 
@@ -140,7 +182,10 @@ Your real save files are never deleted; the hotfix only adds backups.
 display), watchdog timings, panic hotkey, dialogs, extra game arguments (for example `-reboot=true` to skip the
 logo videos), `FixQuitCrash` (the in-memory Quit Game fix, on by default) and `LoadingRescueSeconds` (how long a
 KH1 area load may be blocked by a stuck voice before it is released, and whether stuck sounds are finished after a
-sound failure; `0` = only report, never change the game).
+sound failure; `0` = only report, never change the game). Also `BugReportHotkey` (default `Ctrl+Alt+B`, empty = off)
+and the Discord reporting settings `DiscordBugReportWebhook`, `DiscordLogWebhook` and `DiscordBugReportTags`, which
+belong in `KHHotfix.local.ini` (see [Reporting bugs](#reporting-bugs)). Settings in `KHHotfix.local.ini` override
+`KHHotfix.ini`.
 
 ## For developers
 
@@ -148,12 +193,15 @@ sound failure; `0` = only report, never change the game).
   `src\*.cs` with the C# compiler included in Windows (.NET Framework 4.x); `build.cmd` does the same manually.
   When run from a git clone the hotfix stays in place instead of moving to `%LOCALAPPDATA%`. Put personal settings in
   `KHHotfix.local.ini` there: it overrides `KHHotfix.ini` and is ignored by git.
-- Tests: `KHHotfixCli.exe --selftest` (unit tests), `tests\Run-Tests.ps1` (end-to-end with a fake game: crash,
-  quit freeze, frozen window, save corruption, deleted save; plus read-only checks against the installed game), `tests\Test-SteamConfig.ps1` (Steam config editing),
+- Tests: `KHHotfixCli.exe --selftest` (unit tests, including a local fake Discord), `tests\Run-Tests.ps1` (end-to-end
+  with a fake game and a fake Discord: crash, quit freeze, frozen window, save corruption, deleted save, automatic and
+  command-line reports; plus read-only checks against the installed game), `tests\Test-SteamConfig.ps1` (Steam config editing),
   `tests\Test-Install.ps1` (fresh install from a downloaded ZIP, update, uninstall).
 - CLI: `--check`, `--backup`, `--restore-backup <gz> <save>`, `--display-info`, `--restore-display`, `--nv-status`,
   `--nv-apply [--fps N] [--no-vsync] [--no-gsync-off]`, `--nv-revert`, `--fixes-scan <game folder>`,
   `--fixes-apply <pid> [--exit-code <marker>]`, `--loading-status <pid>`, `--loading-rescue <pid>`, `--audio-devices`,
+  `--report-bug [folder]` (report window), `--report-bug [folder] --send --title <t> --text <d> [--game KH1] [--category Sound]
+  [--name <n>] [--pid <game pid>] [--no-screenshot] [--no-logs] [--no-snapshot]`, `--discord-test [--send]`,
   `--analyze-dump <file.dmp> [game folder]`, `--paths`, `--version`.
 - Code fixes live in `src\GameFixes.cs`: each one is a byte signature (must match exactly once in the executable) plus
   the replacement code. `--fixes-apply <pid> --exit-code 0x4B51` makes the quit fix exit with a marker code, which

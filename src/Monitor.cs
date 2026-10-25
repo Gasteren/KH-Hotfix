@@ -43,6 +43,8 @@ namespace KHHotfix
 
         public string Label { get { return Name + ".exe (pid " + Pid + ")"; } }
 
+        public static bool IsGameName(string name) { return name != null && GameNames.Contains(name); }
+
         public void SampleCpu(DateTime now)
         {
             long t = Native.CpuTime(Handle);
@@ -131,12 +133,12 @@ namespace KHHotfix
         }
     }
 
-    // Message-only window that receives the global panic hotkey (default Ctrl+Alt+K).
+    // Message-only window that receives the global hotkeys (panic Ctrl+Alt+K, bug report Ctrl+Alt+B).
     internal sealed class HotkeyWindow : NativeWindow, IDisposable
     {
         const int WM_HOTKEY = 0x0312;
-        bool registered;
-        public event Action Pressed;
+        readonly List<int> registered = new List<int>();
+        public event Action<int> Pressed;
 
         public HotkeyWindow()
         {
@@ -145,7 +147,7 @@ namespace KHHotfix
             CreateHandle(cp);
         }
 
-        public bool Register(string spec)
+        public bool Register(int id, string spec)
         {
             uint mods = 0x4000; // MOD_NOREPEAT
             Keys key = Keys.None;
@@ -159,24 +161,25 @@ namespace KHHotfix
                 else if (!Enum.TryParse(raw.Trim(), true, out key)) return false;
             }
             if (key == Keys.None) return false;
-            registered = Native.RegisterHotKey(Handle, 1, mods, (uint)key);
-            return registered;
+            if (!Native.RegisterHotKey(Handle, id, mods, (uint)key)) return false;
+            registered.Add(id);
+            return true;
         }
 
         protected override void WndProc(ref Message m)
         {
             if (m.Msg == WM_HOTKEY)
             {
-                Action h = Pressed;
-                if (h != null) h();
+                Action<int> h = Pressed;
+                if (h != null) h(m.WParam.ToInt32());
             }
             base.WndProc(ref m);
         }
 
         public void Dispose()
         {
-            if (registered) Native.UnregisterHotKey(Handle, 1);
-            registered = false;
+            foreach (int id in registered) Native.UnregisterHotKey(Handle, id);
+            registered.Clear();
             if (Handle != IntPtr.Zero) DestroyHandle();
         }
     }

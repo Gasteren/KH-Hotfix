@@ -102,9 +102,10 @@ function Unblock-HotfixFiles([string]$root) {
 }
 
 # Copies the program files (not the personal data folders, not the user's KHHotfix.ini). Returns $true if the ini was new.
+# KHHotfix.local.ini is never overwritten; Merge-LocalIni adds the settings of one that came with the download.
 function Copy-HotfixFiles([string]$from, [string]$to) {
     New-Item -ItemType Directory -Force -Path $to | Out-Null
-    & robocopy.exe $from.TrimEnd('\') $to.TrimEnd('\') /E /XD Backups Logs Reports State CrashDumps .git .github tests /XF *.exe KHHotfix.ini *.khhotfix-tmp /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+    & robocopy.exe $from.TrimEnd('\') $to.TrimEnd('\') /E /XD Backups Logs Reports State CrashDumps Share .git .github tests /XF *.exe KHHotfix.ini KHHotfix.local.ini *.khhotfix-tmp /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
     $code = $LASTEXITCODE
     $global:LASTEXITCODE = 0
     if ($code -ge 8) { throw "Copying the hotfix to $to failed (robocopy exit code $code)" }
@@ -112,6 +113,37 @@ function Copy-HotfixFiles([string]$from, [string]$to) {
     if (Test-Path -LiteralPath $ini) { return $false }
     Copy-Item -LiteralPath (Join-Path $from 'KHHotfix.ini') -Destination $ini
     $true
+}
+
+# Adds the settings of $from\KHHotfix.local.ini (e.g. Discord reporting, shared privately by whoever gave you the hotfix)
+# to $to\KHHotfix.local.ini. Settings in both files take the new value; every other line of the target stays.
+# Returns the names of the settings that were added or changed.
+function Merge-LocalIni([string]$from, [string]$to) {
+    $src = Join-Path $from 'KHHotfix.local.ini'
+    $dst = Join-Path $to 'KHHotfix.local.ini'
+    if (-not (Test-Path -LiteralPath $src)) { return @() }
+    if ([IO.Path]::GetFullPath($src).Equals([IO.Path]::GetFullPath($dst), [StringComparison]::OrdinalIgnoreCase)) { return @() }
+    $new = [ordered]@{}
+    foreach ($line in [IO.File]::ReadAllLines($src)) {
+        if ($line -match '^\s*([A-Za-z][A-Za-z0-9]*)\s*=') { $new[$Matches[1]] = $line.Trim() }
+    }
+    $lines = New-Object System.Collections.Generic.List[string]
+    if (Test-Path -LiteralPath $dst) { foreach ($l in [IO.File]::ReadAllLines($dst)) { $lines.Add($l) } }
+    $changed = @()
+    foreach ($key in @($new.Keys)) {
+        $found = $false
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -notmatch ('^\s*' + [regex]::Escape($key) + '\s*=')) { continue }
+            $found = $true
+            if ($lines[$i].Trim() -ne $new[$key]) { $lines[$i] = $new[$key]; $changed += $key }
+        }
+        if (-not $found) { $lines.Add($new[$key]); $changed += $key }
+    }
+    if ($changed.Count -gt 0) {
+        New-Item -ItemType Directory -Force -Path $to | Out-Null
+        [IO.File]::WriteAllLines($dst, $lines.ToArray(), (New-Object Text.UTF8Encoding($false)))
+    }
+    $changed
 }
 
 # Deletes the hotfix folder once the window that started the uninstaller has closed.
@@ -129,6 +161,7 @@ function New-HotfixShortcuts([string]$root, [string]$gameDir, [string]$programsD
     $kh = Join-Path $gameDir 'KINGDOM HEARTS HD 1.5+2.5 Launcher.exe'
     $shell32 = Join-Path $env:WINDIR 'System32\shell32.dll'
     $items = @(
+        @{ Name = 'Report a KINGDOM HEARTS bug'; Target = (Join-Path $root 'KHHotfix.exe'); Args = '--report-bug'; Icon = $kh }
         @{ Name = 'Restore a KINGDOM HEARTS save'; Target = (Join-Path $root 'Restore.cmd'); Args = ''; Icon = $kh }
         @{ Name = 'KH Hotfix diagnostics'; Target = (Join-Path $root 'Diagnose.cmd'); Args = ''; Icon = "$shell32,23" }
         @{ Name = 'Uninstall KH Hotfix'; Target = (Join-Path $root 'Uninstall.cmd'); Args = ''; Icon = "$shell32,31" }

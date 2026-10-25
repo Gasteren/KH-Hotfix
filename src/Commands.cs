@@ -28,11 +28,57 @@ namespace KHHotfix
                 case "--nv-status": return Nv(delegate { return NvDrs.Status(Console.Out); });
                 case "--nv-apply": return Nv(delegate { return NvDrs.Apply(ArgUInt(a, "--fps", 60), !a.Contains("--no-vsync"), !a.Contains("--no-gsync-off"), Console.Out); });
                 case "--nv-revert": return Nv(delegate { return NvDrs.Revert(Console.Out); });
+                case "--fixes-scan": return FixesScan(a.Length > 1 ? a[1] : null);
+                case "--fixes-apply": return FixesApply(a);
+                case "--analyze-dump":
+                    {
+                        if (a.Length < 2 || !File.Exists(a[1])) { Console.Error.WriteLine("usage: --analyze-dump <file.dmp> [game folder]"); return 2; }
+                        DumpAnalyzer.Report r = DumpAnalyzer.Analyze(a[1]);
+                        DumpAnalyzer.Classify(r, a.Length > 2 ? a[2] : null);
+                        Console.Write(DumpAnalyzer.Format(r, Path.GetFileName(a[1])));
+                        return r.Error == null ? 0 : 1;
+                    }
                 default:
                     Console.Error.WriteLine("Unknown command " + a[0] + ". Commands: --check --backup --restore-backup <gz> <target> [--force] --display-info "
-                        + "--restore-display --nv-status --nv-apply [--fps N] [--no-vsync] [--no-gsync-off] --nv-revert --selftest --paths --version");
+                        + "--restore-display --nv-status --nv-apply [--fps N] [--no-vsync] [--no-gsync-off] --nv-revert --fixes-scan <game folder> "
+                        + "--fixes-apply <pid> --selftest --paths --version");
                     return 2;
             }
+        }
+
+        // Lists the in-memory code fixes and whether they match the installed game version.
+        static int FixesScan(string dir)
+        {
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) { Console.Error.WriteLine("usage: --fixes-scan <game folder>"); return 2; }
+            int usable = 0, broken = 0;
+            foreach (string exe in Directory.GetFiles(dir, "*.exe").OrderBy(f => f))
+            {
+                GameFixes.PeInfo pe;
+                foreach (GameFixes.Site s in GameFixes.Locate(exe, out pe))
+                {
+                    if (s.Problem == null) usable++; else broken++;
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture, "  {0,-45} {1,-24} {2}", Path.GetFileName(exe), s.Fix.Description,
+                        s.Problem ?? ("ready (RVA 0x" + (s.Rva + s.Fix.Offset).ToString("X") + ", build " + pe.TimeDateStamp.ToString("X8") + ")")));
+                }
+            }
+            Console.WriteLine(usable + " fix(es) ready, " + broken + " not matching this game version");
+            return broken == 0 && usable > 0 ? 0 : 7;
+        }
+
+        static int FixesApply(string[] a)
+        {
+            int pid;
+            if (a.Length < 2 || !int.TryParse(a[1], out pid)) { Console.Error.WriteLine("usage: --fixes-apply <pid>"); return 2; }
+            string path = Native.GetImagePath(pid);
+            if (path == null) { Console.Error.WriteLine("process " + pid + " not found"); return 1; }
+            uint? marker = null;
+            int mi = Array.IndexOf(a, "--exit-code");
+            if (mi > 0 && mi + 1 < a.Length) marker = Convert.ToUInt32(a[mi + 1], a[mi + 1].StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? 16 : 10);
+            GameFixes.Result r = GameFixes.Apply(pid, path, marker);
+            for (int i = 0; r.Outcome == GameFixes.Outcome.Retry && i < 20; i++) { System.Threading.Thread.Sleep(250); r = GameFixes.Apply(pid, path, marker); }
+            Console.WriteLine(r.Outcome + ": " + r.Message);
+            Log.Info("fixes-apply " + Path.GetFileName(path) + " pid " + pid + ": " + r.Outcome + " - " + r.Message);
+            return r.Outcome == GameFixes.Outcome.Applied || r.Outcome == GameFixes.Outcome.AlreadyApplied ? 0 : 1;
         }
 
         static uint ArgUInt(string[] a, string name, uint def)
@@ -125,6 +171,54 @@ namespace KHHotfix
             if (!cond) failures++;
         }
 
+        const ulong SyntheticBase = 0x00007FF800000000UL;
+
+        // Minimal minidump: exception (access violation reading 0x1234) in kernel32's code, and a stack holding
+        // junk plus one genuine return address (the instruction after a call in kernel32's .text).
+        static string WriteSyntheticDump(string dir, out ulong rip, out ulong ret)
+        {
+            string k32 = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+            byte[] f = File.ReadAllBytes(k32);
+            GameFixes.PeInfo pe = GameFixes.ReadPe(f);
+            int call = -1;
+            for (int i = pe.TextRaw + 0x2000; i < pe.TextRaw + pe.TextRawSize - 16; i++) if (f[i] == 0xE8) { call = i; break; }
+            rip = SyntheticBase + (ulong)pe.TextRva + 0x100;
+            ret = SyntheticBase + (ulong)(call + 5 - pe.TextRaw + pe.TextRva);
+            const ulong rsp = 0x000000AB00001000UL;
+            var ms = new MemoryStream();
+            var w = new BinaryWriter(ms);
+            w.Write(0x504D444Du); w.Write(0xA793u); w.Write(3u); w.Write(32u); w.Write(0u); w.Write(0u); w.Write(0UL);
+            long dirPos = ms.Position;
+            w.Write(new byte[3 * 12]);
+            long ctxPos = ms.Position;
+            var ctx = new byte[0x4D0];
+            BitConverter.GetBytes(rsp).CopyTo(ctx, 0x98);
+            BitConverter.GetBytes(rip).CopyTo(ctx, 0xF8);
+            w.Write(ctx);
+            long excPos = ms.Position;
+            w.Write(1u); w.Write(0u); w.Write(0xC0000005u); w.Write(0u); w.Write(0UL); w.Write(rip); w.Write(2u); w.Write(0u);
+            w.Write(0UL); w.Write(0x1234UL);
+            for (int i = 2; i < 15; i++) w.Write(0UL);
+            w.Write(0x4D0u); w.Write((uint)ctxPos);
+            long namePos = ms.Position;
+            byte[] name = System.Text.Encoding.Unicode.GetBytes(k32);
+            w.Write((uint)name.Length); w.Write(name); w.Write((ushort)0);
+            long modPos = ms.Position;
+            w.Write(1u); w.Write(SyntheticBase); w.Write(pe.SizeOfImage); w.Write(0u); w.Write(pe.TimeDateStamp); w.Write((uint)namePos); w.Write(new byte[108 - 24]);
+            long stackPos = ms.Position;
+            w.Write(0x1111UL); w.Write(ret); w.Write(0x2222UL);
+            long thrPos = ms.Position;
+            w.Write(1u); w.Write(1u); w.Write(0u); w.Write(0u); w.Write(0u); w.Write(0UL); w.Write(rsp); w.Write(24u); w.Write((uint)stackPos); w.Write(0x4D0u); w.Write((uint)ctxPos);
+            long end = ms.Position;
+            ms.Position = dirPos;
+            w.Write(6u); w.Write(168u); w.Write((uint)excPos);
+            w.Write(4u); w.Write((uint)(stackPos - modPos)); w.Write((uint)modPos);
+            w.Write(3u); w.Write((uint)(end - thrPos)); w.Write((uint)thrPos);
+            string path = Path.Combine(dir, "synthetic.dmp");
+            File.WriteAllBytes(path, ms.ToArray());
+            return path;
+        }
+
         public static byte[] MakePng(int trailing)
         {
             using (var bmp = new Bitmap(16, 16))
@@ -167,6 +261,37 @@ namespace KHHotfix
             Console.WriteLine("Crash code classification");
             Expect(CrashCodes.IsCrash(0xC0000005) && CrashCodes.IsCrash(0x887A0005) && CrashCodes.IsCrash(0xE0434352), "crash codes detected");
             Expect(!CrashCodes.IsCrash(0) && !CrashCodes.IsCrash(1) && !CrashCodes.IsCrash(CrashCodes.KilledByHotfix), "normal exit codes ignored");
+
+            Console.WriteLine("In-memory code fixes");
+            int off, len;
+            byte?[] pat = GameFixes.ParsePattern("AA ?? | BB CC | DD", out off, out len);
+            Expect(pat.Length == 5 && !pat[1].HasValue && off == 2 && len == 2, "signature parsing (wildcards, patch region)");
+            byte[] hay = { 1, 0xAA, 9, 0xBB, 0xCC, 0xDD, 0xAA, 7, 0xBB, 0xCC, 0xDE };
+            List<int> found = GameFixes.FindAll(hay, 0, hay.Length, pat);
+            Expect(found.Count == 1 && found[0] == 1, "signature scan finds the single exact match");
+            byte[] patch = GameFixes.BuildQuitPatch(0xDA, 0x00007FF912345678UL, 25);
+            Expect(patch.Length == 25 && patch[0] == 0x89 && patch[1] == 0xDA && patch[6] == 0x48 && patch[7] == 0xB8
+                && BitConverter.ToUInt64(patch, 8) == 0x00007FF912345678UL && patch[16] == 0xFF && patch[17] == 0xD0 && patch.Skip(18).All(b => b == 0xCC),
+                "quit patch encodes mov edx,ebx / or rcx,-1 / mov rax,imm64 / call rax");
+            Expect(GameFixes.Catalog.Length == 5 && GameFixes.Catalog.All(f => f.Length >= 18 && f.Offset + f.Length <= f.Pattern.Length && f.Pattern[0].HasValue),
+                "every catalogued fix has room for the patch");
+            GameFixes.PeInfo me = GameFixes.ReadPe(File.ReadAllBytes(System.Windows.Forms.Application.ExecutablePath));
+            Expect(me != null && me.TextRawSize > 0 && me.SizeOfImage > 0, "PE reader finds the .text section");
+
+            Console.WriteLine("Crash dump analysis (synthetic dump)");
+            string dumpDir = Path.Combine(Path.GetTempPath(), "KHHotfix-dumptest-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(dumpDir);
+                ulong rip, ret;
+                string dmp = WriteSyntheticDump(dumpDir, out rip, out ret);
+                DumpAnalyzer.Report rep = DumpAnalyzer.Analyze(dmp);
+                Expect(rep.Error == null && rep.ExceptionCode == 0xC0000005 && rep.AccessType == 0 && rep.FaultAddress == 0x1234, "exception code, access type and fault address read");
+                Expect(rep.Frames.Count == 2 && rep.Frames[0].Rva == (uint)(rip - SyntheticBase) && rep.Frames[1].Rva == (uint)(ret - SyntheticBase)
+                    && rep.Frames[1].Module.Equals("kernel32.dll", StringComparison.OrdinalIgnoreCase), "faulting instruction and the real return address found, junk ignored");
+                Expect(DumpAnalyzer.Format(rep, "x.dmp").Contains("Signature:"), "report formatted with a signature");
+            }
+            finally { try { Directory.Delete(dumpDir, true); } catch { } }
 
             Console.WriteLine("Backups, retention and auto-heal (temporary folder)");
             string saveRootBackup = Paths.SavesRoot, backupsBackup = Paths.Backups, quarantineBackup = Paths.Quarantine;

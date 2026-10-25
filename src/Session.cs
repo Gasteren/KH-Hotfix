@@ -117,7 +117,9 @@ namespace KHHotfix
                 Step("post-exit backup", delegate { saves.SnapshotAll("post-exit"); });
                 Step("crash report", delegate { report = CollectReport(); });
                 postNotices.AddRange(saves.SessionNotices);
-                if (rootTracked != null && rootTracked.Exited && !rootTracked.KilledByHotfix && rootTracked.ExitCode != 0 && done.Count + live.Count == 1)
+                if (rootTracked != null && rootTracked.Exited && !rootTracked.KilledByHotfix && rootTracked.ExitCode != 0 && !rootTracked.HadWindow
+                    && done.Count + live.Count == 1 && (rootTracked.ExitedUtc - rootTracked.FirstSeenUtc).TotalSeconds < 20
+                    && rootTracked.Name.Equals("KINGDOM HEARTS HD 1.5+2.5 ReMIX", StringComparison.OrdinalIgnoreCase))
                     postNotices.Add("The game closed immediately (code 0x" + rootTracked.ExitCode.ToString("X8") + CrashCodes.Describe(rootTracked.ExitCode)
                         + ") before its launcher opened. If the game is shared through Steam Families, another family member may be using it (the licence is locked). "
                         + "Otherwise use Steam > Properties > Installed Files > Verify integrity.");
@@ -174,6 +176,7 @@ namespace KHHotfix
             tick++;
             DateTime now = DateTime.UtcNow;
             Discover();
+            ApplyFixes();
             PollExits();
             Watch(now);
             if (tick % 2 == 0) saves.Poll();
@@ -211,6 +214,23 @@ namespace KHHotfix
                 }
                 catch { }
                 finally { p.Dispose(); }
+            }
+        }
+
+        void ApplyFixes()
+        {
+            if (!Settings.FixQuitCrash) return;
+            foreach (TrackedProcess t in live.Values)
+            {
+                if (t.FixDone || !t.IsGame || t.Handle == IntPtr.Zero) continue;
+                t.FixAttempts++;
+                GameFixes.Result r;
+                try { r = GameFixes.Apply(t.Pid, t.ImagePath); }
+                catch (Exception ex) { r = new GameFixes.Result(GameFixes.Outcome.Failed, ex.Message); }
+                if (r.Outcome == GameFixes.Outcome.Retry && t.FixAttempts < 20) continue;
+                t.FixDone = true;
+                if (r.Outcome == GameFixes.Outcome.Applied || r.Outcome == GameFixes.Outcome.AlreadyApplied) Log.Info(t.Label + " code fixes: " + r.Message);
+                else Log.Warn(t.Label + " code fixes not applied: " + r.Message);
             }
         }
 
@@ -371,9 +391,23 @@ namespace KHHotfix
                 }
                 catch (Exception ex) { Log.Warn("Could not collect WER report " + w + ": " + ex.Message); }
             }
+            var known = new List<string>();
+            foreach (string dmp in Directory.GetFiles(dir, "*.dmp"))
+            {
+                try
+                {
+                    DumpAnalyzer.Report r = DumpAnalyzer.Analyze(dmp);
+                    DumpAnalyzer.Classify(r, gameDir);
+                    File.AppendAllText(Path.Combine(dir, "summary.txt"), Environment.NewLine + DumpAnalyzer.Format(r, Path.GetFileName(dmp)));
+                    Log.Info("Crash signature: " + DumpAnalyzer.Signature(r));
+                    if (r.KnownIssue != null) known.Add(r.KnownIssue);
+                }
+                catch (Exception ex) { Log.Warn("Crash dump analysis failed for " + dmp + ": " + ex.Message); }
+            }
             if (crashed.Count > 0)
                 postNotices.Insert(0, string.Join(", ", crashed.Select(c => c.Name + ".exe (0x" + c.ExitCode.ToString("X8") + CrashCodes.Describe(c.ExitCode) + ")"))
-                    + " crashed. Your saves were backed up; a crash report was written to " + dir + ". Use Restore.cmd if the game now reports a save as corrupt.");
+                    + " crashed. Your saves were backed up; a crash report was written to " + dir + ". Use Restore.cmd if the game now reports a save as corrupt."
+                    + (known.Count > 0 ? " Recognized: " + string.Join("; ", known.Distinct()) + "." : " Sharing Reports\\" + Path.GetFileName(dir) + "\\summary.txt helps to fix this crash."));
             Log.Info("Crash/hang report written to " + dir);
             return dir;
         }

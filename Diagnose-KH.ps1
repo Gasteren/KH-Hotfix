@@ -64,6 +64,13 @@ if ($sac -eq 'on') { $advice.Add('Smart App Control is on: it blocks unsigned pr
 $drive = Get-PSDrive -Name $docs.Substring(0, 1) -ErrorAction SilentlyContinue
 if ($drive) { Add ('Free space on {0}: {1:N1} GB' -f $drive.Name, ($drive.Free / 1GB)) }
 
+Section 'Code fixes (applied in memory while the game runs)'
+if ($kh) {
+    $fx = Invoke-Cli @('--fixes-scan', $kh.Path)
+    Add $fx.Output
+    if ($fx.Code -ne 0) { $advice.Add('Some code fixes do not match this game version (the game was probably updated) - check for a newer KH-Hotfix.') }
+}
+
 Section 'Display and GPU'
 Add ((Invoke-Cli @('--display-info')).Output)
 foreach ($g in Get-CimInstance Win32_VideoController) { Add "GPU: $($g.Name)  driver $($g.DriverVersion) ($('{0:yyyy-MM-dd}' -f $g.DriverDate))" }

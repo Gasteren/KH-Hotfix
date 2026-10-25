@@ -131,6 +131,7 @@ namespace KHHotfix
         public static bool ShowDialogs = true;
         public static string SavesRoot = "";
         public static string ExtraGameArgs = "";
+        public static bool FixQuitCrash = true;
 
         public static string FilePath { get { return Path.Combine(Paths.Root, "KHHotfix.ini"); } }
 
@@ -158,6 +159,7 @@ namespace KHHotfix
                     case "showdialogs": ShowDialogs = Bool(val, ShowDialogs); break;
                     case "savesroot": SavesRoot = val; break;
                     case "extragameargs": ExtraGameArgs = val; break;
+                    case "fixquitcrash": FixQuitCrash = Bool(val, FixQuitCrash); break;
                 }
             }
         }

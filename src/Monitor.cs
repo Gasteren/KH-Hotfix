@@ -22,7 +22,8 @@ namespace KHHotfix
         public readonly bool OwnsHandle, IsGame, IsHangWatched;
         public readonly DateTime FirstSeenUtc = DateTime.UtcNow;
         public IntPtr Handle;
-        public bool HadWindow, WindowGoneLogged, Exited, KilledByHotfix;
+        public bool HadWindow, WindowGoneLogged, Exited, KilledByHotfix, FixDone;
+        public int FixAttempts;
         public DateTime LastVisibleUtc = DateTime.UtcNow, HungSinceUtc = DateTime.MinValue, ExitedUtc;
         public uint ExitCode;
         public string KillReason;

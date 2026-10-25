@@ -104,7 +104,7 @@ function Unblock-HotfixFiles([string]$root) {
 # Copies the program files (not the personal data folders, not the user's KHHotfix.ini). Returns $true if the ini was new.
 function Copy-HotfixFiles([string]$from, [string]$to) {
     New-Item -ItemType Directory -Force -Path $to | Out-Null
-    & robocopy.exe $from.TrimEnd('\') $to.TrimEnd('\') /E /XD Backups Logs Reports State CrashDumps .git tests /XF *.exe KHHotfix.ini *.khhotfix-tmp /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+    & robocopy.exe $from.TrimEnd('\') $to.TrimEnd('\') /E /XD Backups Logs Reports State CrashDumps .git .github tests /XF *.exe KHHotfix.ini *.khhotfix-tmp /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
     $code = $LASTEXITCODE
     $global:LASTEXITCODE = 0
     if ($code -ge 8) { throw "Copying the hotfix to $to failed (robocopy exit code $code)" }

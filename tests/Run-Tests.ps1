@@ -70,11 +70,15 @@ try {
     Expect ($r.Log -match 'Watchdog: terminating KINGDOM HEARTS FINAL MIX\.exe' -and $r.Log -match 'shutdown hang') 'hung shutdown detected and terminated'
     Expect ($r.Seconds -lt 45) "session ended by itself ($($r.Seconds) s)"
     Expect ($r.Log -match 'Backup \[before watchdog termination\]|Backup \[post-exit\]|Backup \[in-game save\]') 'saves backed up around the termination'
+    $rep = Get-Reports | Sort-Object Name | Select-Object -Last 1
+    Expect ($rep -and @(Get-ChildItem $rep.FullName -Filter '*frozen*.dmp').Count -eq 1 -and (Get-Content -Raw (Join-Path $rep.FullName 'summary.txt')) -match 'Freeze analysis') 'freeze snapshot taken before closing and analyzed in the report'
 
     Write-Host 'Scenario: frozen window'
     $r = Invoke-Session 'hungwindow'
     Expect ($r.Log -match 'is not responding' -and $r.Log -match 'frozen') 'frozen window detected and terminated'
     Expect ($r.Seconds -lt 60) "session ended by itself ($($r.Seconds) s)"
+    $rep = Get-Reports | Sort-Object Name | Select-Object -Last 1
+    Expect ($rep -and @(Get-ChildItem $rep.FullName -Filter '*frozen*.dmp').Count -eq 1 -and (Get-Content -Raw (Join-Path $rep.FullName 'summary.txt')) -match 'Freeze analysis') 'frozen window: snapshot taken and analyzed'
 
     Write-Host 'Scenario: crash while saving, then next launch'
     $null = Invoke-Session 'corruptsave'

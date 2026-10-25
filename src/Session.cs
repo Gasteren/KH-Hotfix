@@ -305,6 +305,7 @@ namespace KHHotfix
         void Kill(TrackedProcess t, string reason)
         {
             Log.Warn("Watchdog: terminating " + t.Label + " - it " + reason);
+            HangDump.Write(t, "frozen");
             saves.WaitForStableAndSnapshot("before watchdog termination", 5000);
             t.KilledByHotfix = true;
             t.KillReason = reason;
@@ -317,6 +318,7 @@ namespace KHHotfix
             if (finishing || panicked) return;
             panicked = true;
             Log.Warn("Panic hotkey pressed - closing all KINGDOM HEARTS processes");
+            foreach (TrackedProcess t in live.Values.Where(x => x.IsHangWatched).ToList()) HangDump.Write(t, "panic hotkey");
             saves.WaitForStableAndSnapshot("panic hotkey", 3000);
             foreach (TrackedProcess t in live.Values.ToList())
             {
@@ -375,8 +377,8 @@ namespace KHHotfix
                 try
                 {
                     string target = Path.Combine(dir, Path.GetFileName(d));
-                    // The game always reuses "<exe name>.dmp", so move it out before the next crash overwrites it.
-                    if (d.StartsWith(gameDirPrefix, StringComparison.OrdinalIgnoreCase)) File.Move(d, target);
+                    // The game always reuses "<exe name>.dmp" and the hotfix's own dumps would pile up, so move those.
+                    if (d.StartsWith(gameDirPrefix, StringComparison.OrdinalIgnoreCase) || d.StartsWith(Paths.CrashDumps + "\\", StringComparison.OrdinalIgnoreCase)) File.Move(d, target);
                     else File.Copy(d, target, true);
                 }
                 catch (Exception ex) { Log.Warn("Could not collect " + d + ": " + ex.Message); }

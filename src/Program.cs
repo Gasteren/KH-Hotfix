@@ -134,11 +134,19 @@ namespace KHHotfix
         public static bool FixQuitCrash = true;
 
         public static string FilePath { get { return Path.Combine(Paths.Root, "KHHotfix.ini"); } }
+        // Personal overrides on top of KHHotfix.ini (ignored by git, so a clone's defaults stay untouched).
+        public static string LocalFilePath { get { return Path.Combine(Paths.Root, "KHHotfix.local.ini"); } }
 
         public static void Load()
         {
-            if (!File.Exists(FilePath)) return;
-            foreach (string raw in File.ReadAllLines(FilePath))
+            LoadFile(FilePath);
+            LoadFile(LocalFilePath);
+        }
+
+        static void LoadFile(string path)
+        {
+            if (!File.Exists(path)) return;
+            foreach (string raw in File.ReadAllLines(path))
             {
                 string line = raw.Trim();
                 if (line.Length == 0 || line[0] == ';' || line[0] == '#' || line[0] == '[') continue;

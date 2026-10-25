@@ -175,7 +175,7 @@ namespace KHHotfix
 
         // Minimal minidump: exception (access violation reading 0x1234) in kernel32's code, and a stack holding
         // junk plus one genuine return address (the instruction after a call in kernel32's .text).
-        static string WriteSyntheticDump(string dir, out ulong rip, out ulong ret)
+        static string WriteSyntheticDump(string dir, bool withException, out ulong rip, out ulong ret)
         {
             string k32 = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
             byte[] f = File.ReadAllBytes(k32);
@@ -187,7 +187,7 @@ namespace KHHotfix
             const ulong rsp = 0x000000AB00001000UL;
             var ms = new MemoryStream();
             var w = new BinaryWriter(ms);
-            w.Write(0x504D444Du); w.Write(0xA793u); w.Write(3u); w.Write(32u); w.Write(0u); w.Write(0u); w.Write(0UL);
+            w.Write(0x504D444Du); w.Write(0xA793u); w.Write(withException ? 3u : 2u); w.Write(32u); w.Write(0u); w.Write(0u); w.Write(0UL);
             long dirPos = ms.Position;
             w.Write(new byte[3 * 12]);
             long ctxPos = ms.Position;
@@ -211,10 +211,10 @@ namespace KHHotfix
             w.Write(1u); w.Write(1u); w.Write(0u); w.Write(0u); w.Write(0u); w.Write(0UL); w.Write(rsp); w.Write(24u); w.Write((uint)stackPos); w.Write(0x4D0u); w.Write((uint)ctxPos);
             long end = ms.Position;
             ms.Position = dirPos;
-            w.Write(6u); w.Write(168u); w.Write((uint)excPos);
+            if (withException) { w.Write(6u); w.Write(168u); w.Write((uint)excPos); }
             w.Write(4u); w.Write((uint)(stackPos - modPos)); w.Write((uint)modPos);
             w.Write(3u); w.Write((uint)(end - thrPos)); w.Write((uint)thrPos);
-            string path = Path.Combine(dir, "synthetic.dmp");
+            string path = Path.Combine(dir, withException ? "crash.dmp" : "freeze.dmp");
             File.WriteAllBytes(path, ms.ToArray());
             return path;
         }
@@ -284,12 +284,16 @@ namespace KHHotfix
             {
                 Directory.CreateDirectory(dumpDir);
                 ulong rip, ret;
-                string dmp = WriteSyntheticDump(dumpDir, out rip, out ret);
+                string dmp = WriteSyntheticDump(dumpDir, true, out rip, out ret);
                 DumpAnalyzer.Report rep = DumpAnalyzer.Analyze(dmp);
                 Expect(rep.Error == null && rep.ExceptionCode == 0xC0000005 && rep.AccessType == 0 && rep.FaultAddress == 0x1234, "exception code, access type and fault address read");
                 Expect(rep.Frames.Count == 2 && rep.Frames[0].Rva == (uint)(rip - SyntheticBase) && rep.Frames[1].Rva == (uint)(ret - SyntheticBase)
                     && rep.Frames[1].Module.Equals("kernel32.dll", StringComparison.OrdinalIgnoreCase), "faulting instruction and the real return address found, junk ignored");
                 Expect(DumpAnalyzer.Format(rep, "x.dmp").Contains("Signature:"), "report formatted with a signature");
+                DumpAnalyzer.Report frz = DumpAnalyzer.Analyze(WriteSyntheticDump(dumpDir, false, out rip, out ret));
+                Expect(frz.Error == null && frz.IsFreeze && frz.Frames.Count == 2 && frz.Frames[1].Rva == (uint)(ret - SyntheticBase)
+                    && DumpAnalyzer.Format(frz, "f.dmp").Contains("Freeze analysis") && DumpAnalyzer.Signature(frz).Contains("| freeze at"),
+                    "freeze snapshot (no exception): main thread stack recovered");
             }
             finally { try { Directory.Delete(dumpDir, true); } catch { } }
 

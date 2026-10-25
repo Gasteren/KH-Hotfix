@@ -116,7 +116,8 @@ logo videos) and `FixQuitCrash` (the in-memory Quit Game fix, on by default).
 
 - `Install.cmd` builds `KHHotfix.exe` (Steam wrapper, no console) and `KHHotfixCli.exe` (maintenance commands) from
   `src\*.cs` with the C# compiler included in Windows (.NET Framework 4.x); `build.cmd` does the same manually.
-  When run from a git clone the hotfix stays in place instead of moving to `%LOCALAPPDATA%`.
+  When run from a git clone the hotfix stays in place instead of moving to `%LOCALAPPDATA%`. Put personal settings in
+  `KHHotfix.local.ini` there: it overrides `KHHotfix.ini` and is ignored by git.
 - Tests: `KHHotfixCli.exe --selftest` (unit tests), `tests\Run-Tests.ps1` (end-to-end with a fake game: crash,
   quit freeze, frozen window, save corruption, deleted save), `tests\Test-SteamConfig.ps1` (Steam config editing),
   `tests\Test-Install.ps1` (fresh install from a downloaded ZIP, update, uninstall).

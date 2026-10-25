@@ -55,6 +55,8 @@ namespace KHHotfix
 
         public sealed class Frame { public string Module; public uint Rva, FunctionStart; public bool HasFunction; public bool IsGame; }
 
+        public sealed class ThreadStack { public uint ThreadId; public List<Frame> Frames = new List<Frame>(); }
+
         public sealed class Report
         {
             public uint ExceptionCode, ThreadId;
@@ -64,6 +66,8 @@ namespace KHHotfix
             public List<Frame> Frames = new List<Frame>();
             public string Error;
             public string KnownIssue;
+            public bool IsFreeze;                                     // dump written by the hotfix of a frozen game
+            public List<ThreadStack> OtherThreads = new List<ThreadStack>();
         }
 
         static uint U32(byte[] d, long o) { return BitConverter.ToUInt32(d, (int)o); }
@@ -83,7 +87,7 @@ namespace KHHotfix
                 uint type = U32(d, e), rva = U32(d, e + 8);
                 if (type == 6) exc = rva; else if (type == 4) mods = rva; else if (type == 3) threads = rva;
             }
-            if (exc < 0 || mods < 0 || threads < 0) { rep.Error = "the dump has no exception, module or thread information"; return rep; }
+            if (mods < 0 || threads < 0) { rep.Error = "the dump has no module or thread information"; return rep; }
 
             var modules = new List<Module>();
             uint nMods = U32(d, mods);
@@ -94,6 +98,26 @@ namespace KHHotfix
                 int len = (int)U32(d, nameRva);
                 modules.Add(new Module { Base = U64(d, m), Size = U32(d, m + 8), TimeDateStamp = U32(d, m + 16), Path = Encoding.Unicode.GetString(d, (int)nameRva + 4, len) });
             }
+            Module game = modules.FirstOrDefault(m => TrackedName(m.Name));
+            if (game != null) { rep.GameModule = game.Name; rep.GameBuild = game.TimeDateStamp.ToString("X8"); }
+            uint nThreads = U32(d, threads);
+
+            if (exc < 0)
+            {
+                // Freeze dump (no exception): the main thread is the first one; also keep threads that run game code.
+                rep.IsFreeze = true;
+                for (uint i = 0; i < nThreads; i++)
+                {
+                    long t = threads + 4 + i * 48;
+                    uint ctx = U32(d, t + 44);
+                    var ts = new ThreadStack { ThreadId = U32(d, t) };
+                    AddFrame(ts.Frames, modules, U64(d, ctx + 0xF8), false);
+                    ScanStack(d, t, U64(d, ctx + 0x98), modules, ts.Frames, 24);
+                    if (i == 0) { rep.ThreadId = ts.ThreadId; rep.Frames = ts.Frames; }
+                    else if (ts.Frames.Any(f => f.IsGame) && rep.OtherThreads.Count < 6) rep.OtherThreads.Add(ts);
+                }
+                return rep;
+            }
 
             rep.ThreadId = U32(d, exc);
             rep.ExceptionCode = U32(d, exc + 8);
@@ -103,23 +127,23 @@ namespace KHHotfix
             uint ctxRva = U32(d, exc + 160 + 4);
             ulong rsp = U64(d, ctxRva + 0x98), rip = U64(d, ctxRva + 0xF8);
             if (rip == 0) rip = excAddress;
-
-            Module game = modules.FirstOrDefault(m => TrackedName(m.Name));
-            if (game != null) { rep.GameModule = game.Name; rep.GameBuild = game.TimeDateStamp.ToString("X8"); }
-            AddFrame(rep, modules, rip, false);
-
-            uint nThreads = U32(d, threads);
+            AddFrame(rep.Frames, modules, rip, false);
             for (uint i = 0; i < nThreads; i++)
             {
                 long t = threads + 4 + i * 48;
-                if (U32(d, t) != rep.ThreadId) continue;
-                ulong stackStart = U64(d, t + 24);
-                uint stackSize = U32(d, t + 32), stackRva = U32(d, t + 36);
-                ulong from = rsp >= stackStart && rsp < stackStart + stackSize ? rsp - stackStart : 0;
-                for (ulong off = from; off + 8 <= stackSize && off - from < 256 * 1024 && rep.Frames.Count < 40; off += 8)
-                    AddFrame(rep, modules, U64(d, stackRva + (long)off), true);
+                if (U32(d, t) == rep.ThreadId) ScanStack(d, t, rsp, modules, rep.Frames, 40);
             }
             return rep;
+        }
+
+        // Adds every value on the thread's stack (from rsp upwards) that is a genuine return address.
+        static void ScanStack(byte[] d, long thread, ulong rsp, List<Module> modules, List<Frame> frames, int max)
+        {
+            ulong stackStart = U64(d, thread + 24);
+            uint stackSize = U32(d, thread + 32), stackRva = U32(d, thread + 36);
+            ulong from = rsp >= stackStart && rsp < stackStart + stackSize ? rsp - stackStart : 0;
+            for (ulong off = from; off + 8 <= stackSize && off - from < 256 * 1024 && frames.Count < max; off += 8)
+                AddFrame(frames, modules, U64(d, stackRva + (long)off), true);
         }
 
         static bool TrackedName(string name)
@@ -127,7 +151,7 @@ namespace KHHotfix
             return name.StartsWith("KINGDOM HEARTS", StringComparison.OrdinalIgnoreCase);
         }
 
-        static void AddFrame(Report rep, List<Module> modules, ulong address, bool mustFollowCall)
+        static void AddFrame(List<Frame> frames, List<Module> modules, ulong address, bool mustFollowCall)
         {
             Module m = modules.FirstOrDefault(x => address >= x.Base && address < x.Base + x.Size);
             if (m == null) return;
@@ -137,7 +161,7 @@ namespace KHHotfix
             var fr = new Frame { Module = m.Name, Rva = rva, IsGame = TrackedName(m.Name) };
             uint start;
             if (f != null && f.FunctionOf(rva, out start)) { fr.HasFunction = true; fr.FunctionStart = start; }
-            rep.Frames.Add(fr);
+            frames.Add(fr);
         }
 
         static ModuleFile Load(Module m)
@@ -196,22 +220,36 @@ namespace KHHotfix
         public static string Format(Report r, string dumpName)
         {
             var sb = new StringBuilder();
-            sb.AppendLine("Crash analysis of " + dumpName);
+            sb.AppendLine((r.IsFreeze ? "Freeze analysis of " : "Crash analysis of ") + dumpName);
             if (r.Error != null) { sb.AppendLine("  " + r.Error); return sb.ToString(); }
-            sb.Append("  Exception 0x" + r.ExceptionCode.ToString("X8") + CrashCodes.Describe(r.ExceptionCode));
-            if (r.AccessType >= 0) sb.Append(string.Format(CultureInfo.InvariantCulture, " {0} address 0x{1:X16}", r.AccessType == 1 ? "writing" : r.AccessType == 8 ? "executing" : "reading", r.FaultAddress));
-            sb.AppendLine();
+            if (r.IsFreeze) sb.AppendLine("  The game was frozen; the hotfix took this snapshot before closing it.");
+            else
+            {
+                sb.Append("  Exception 0x" + r.ExceptionCode.ToString("X8") + CrashCodes.Describe(r.ExceptionCode));
+                if (r.AccessType >= 0) sb.Append(string.Format(CultureInfo.InvariantCulture, " {0} address 0x{1:X16}", r.AccessType == 1 ? "writing" : r.AccessType == 8 ? "executing" : "reading", r.FaultAddress));
+                sb.AppendLine();
+            }
             if (r.GameModule != null) sb.AppendLine("  Game: " + r.GameModule + ", build " + r.GameBuild);
             if (r.KnownIssue != null) sb.AppendLine("  Known issue: " + r.KnownIssue);
-            sb.AppendLine("  Call stack (most recent first):");
-            for (int i = 0; i < r.Frames.Count; i++)
+            sb.AppendLine(r.IsFreeze ? "  Main thread (most recent first):" : "  Call stack (most recent first):");
+            AppendFrames(sb, r.Frames, 40);
+            foreach (ThreadStack ts in r.OtherThreads)
             {
-                Frame f = r.Frames[i];
-                sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "    #{0,-2} {1}+0x{2:X}{3}", i, f.Module, f.Rva,
-                    f.HasFunction ? string.Format(CultureInfo.InvariantCulture, "   (function 0x{0:X}+0x{1:X})", f.FunctionStart, f.Rva - f.FunctionStart) : ""));
+                sb.AppendLine("  Thread 0x" + ts.ThreadId.ToString("X") + " (running game code):");
+                AppendFrames(sb, ts.Frames, 12);
             }
             sb.AppendLine("  Signature: " + Signature(r));
             return sb.ToString();
+        }
+
+        static void AppendFrames(StringBuilder sb, List<Frame> frames, int max)
+        {
+            for (int i = 0; i < Math.Min(max, frames.Count); i++)
+            {
+                Frame f = frames[i];
+                sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "    #{0,-2} {1}+0x{2:X}{3}", i, f.Module, f.Rva,
+                    f.HasFunction ? string.Format(CultureInfo.InvariantCulture, "   (function 0x{0:X}+0x{1:X})", f.FunctionStart, f.Rva - f.FunctionStart) : ""));
+            }
         }
 
         // Stable identifier of a crash: game build plus the first game functions on the stack.
@@ -219,7 +257,8 @@ namespace KHHotfix
         {
             var fns = r.Frames.Where(f => f.IsGame).Select(f => f.HasFunction ? f.FunctionStart.ToString("X") : "?" + f.Rva.ToString("X")).Take(6);
             Frame top = r.Frames.FirstOrDefault();
-            return (r.GameModule ?? "?") + " " + (r.GameBuild ?? "?") + " | 0x" + r.ExceptionCode.ToString("X8") + " at " + (top == null ? "?" : top.Module + "+0x" + top.Rva.ToString("X")) + " | " + string.Join(" ", fns);
+            string what = r.IsFreeze ? "freeze" : "0x" + r.ExceptionCode.ToString("X8");
+            return (r.GameModule ?? "?") + " " + (r.GameBuild ?? "?") + " | " + what + " at " + (top == null ? "?" : top.Module + "+0x" + top.Rva.ToString("X")) + " | " + string.Join(" ", fns);
         }
 
         // Recognizes crashes that a code fix addresses: the stack runs through the instruction after a fix site.

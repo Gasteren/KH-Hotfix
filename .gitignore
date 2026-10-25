@@ -9,3 +9,6 @@
 *.exe
 *.pdb
 *.khhotfix-tmp
+
+# Personal settings that override KHHotfix.ini
+KHHotfix.local.ini

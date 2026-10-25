@@ -1,0 +1,4 @@
+* text=auto eol=crlf
+# Batch files must keep CRLF line endings in clones and in GitHub's ZIP downloads.
+*.cmd -text
+*.exe binary

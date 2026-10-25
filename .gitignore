@@ -1,0 +1,11 @@
+# Personal runtime data: save backups, logs, crash reports, Steam config backups
+/Backups/
+/Logs/
+/Reports/
+/State/
+/CrashDumps/
+
+# Built from src\ by Install.cmd / build.cmd
+*.exe
+*.pdb
+*.khhotfix-tmp

@@ -57,6 +57,7 @@ try {
     Expect ((Get-Content -Raw (Join-Path $work 'fake-cmdlines.txt')) -match 'ReMIX\.exe" -testarg "two words"') 'Steam %command% arguments passed through unchanged'
     Expect ((Get-Reports).Count -eq 0) 'no crash report for a clean session'
     Expect ($r.Log -match 'refresh switching disabled') 'display untouched when TargetRefreshHz=0'
+    Expect ($r.Log -match 'loading guard not available: .*different game version') 'loading guard backs off on an unknown KH1 build (writes nothing)'
 
     Write-Host 'Scenario: crash'
     $r = Invoke-Session 'crash'
@@ -99,6 +100,15 @@ try {
     $target = Join-Path $saves 'Steam\76561190000000000\KHFM_WW.png'
     $out = & (Join-Path $hot 'KHHotfixCli.exe') --restore-backup $gz.FullName $target --force | Out-String   # --force: a real game may be running during the test
     Expect ($LASTEXITCODE -eq 0 -and $out -match 'Restored') '--restore-backup restores a chosen version'
+
+    $kh = Find-KHInstall
+    if ($kh) {
+        Write-Host 'Installed game (read-only checks)'
+        $out = & (Join-Path $hot 'KHHotfixCli.exe') --fixes-scan $kh.Path | Out-String
+        Expect ($out -match 'KINGDOM HEARTS FINAL MIX\.exe\s+Endless loading screen\s+ready') 'endless-loading guard matches the installed KH1'
+        Expect ($out -match 'KINGDOM HEARTS FINAL MIX\.exe\s+Quit Game crash/freeze\s+ready') 'quit fix matches the installed KH1'
+    }
+    else { Write-Host '  SKIP  game not installed - real-executable checks skipped' }
 }
 finally {
     Remove-Item Env:FAKEKH_MODE, Env:KHHOTFIX_SAVES_ROOT, Env:KHHOTFIX_INSTANCE -ErrorAction SilentlyContinue

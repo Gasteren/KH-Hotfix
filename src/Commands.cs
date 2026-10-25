@@ -30,6 +30,8 @@ namespace KHHotfix
                 case "--nv-revert": return Nv(delegate { return NvDrs.Revert(Console.Out); });
                 case "--fixes-scan": return FixesScan(a.Length > 1 ? a[1] : null);
                 case "--fixes-apply": return FixesApply(a);
+                case "--loading-status": return LoadingCommand(a, false);
+                case "--loading-rescue": return LoadingCommand(a, true);
                 case "--analyze-dump":
                     {
                         if (a.Length < 2 || !File.Exists(a[1])) { Console.Error.WriteLine("usage: --analyze-dump <file.dmp> [game folder]"); return 2; }
@@ -41,7 +43,7 @@ namespace KHHotfix
                 default:
                     Console.Error.WriteLine("Unknown command " + a[0] + ". Commands: --check --backup --restore-backup <gz> <target> [--force] --display-info "
                         + "--restore-display --nv-status --nv-apply [--fps N] [--no-vsync] [--no-gsync-off] --nv-revert --fixes-scan <game folder> "
-                        + "--fixes-apply <pid> --selftest --paths --version");
+                        + "--fixes-apply <pid> --loading-status <pid> --loading-rescue <pid> --selftest --paths --version");
                     return 2;
             }
         }
@@ -59,6 +61,12 @@ namespace KHHotfix
                     if (s.Problem == null) usable++; else broken++;
                     Console.WriteLine(string.Format(CultureInfo.InvariantCulture, "  {0,-45} {1,-24} {2}", Path.GetFileName(exe), s.Fix.Description,
                         s.Problem ?? ("ready (RVA 0x" + (s.Rva + s.Fix.Offset).ToString("X") + ", build " + pe.TimeDateStamp.ToString("X8") + ")")));
+                }
+                if (Path.GetFileNameWithoutExtension(exe).Equals(LoadingGuard.GameName, StringComparison.OrdinalIgnoreCase))
+                {
+                    LoadingGuard.Layout l = LoadingGuard.Locate(exe);
+                    if (l.Problem == null) usable++; else broken++;
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture, "  {0,-45} {1,-24} {2}", Path.GetFileName(exe), "Endless loading screen", l.Describe()));
                 }
             }
             Console.WriteLine(usable + " fix(es) ready, " + broken + " not matching this game version");
@@ -79,6 +87,25 @@ namespace KHHotfix
             Console.WriteLine(r.Outcome + ": " + r.Message);
             Log.Info("fixes-apply " + Path.GetFileName(path) + " pid " + pid + ": " + r.Outcome + " - " + r.Message);
             return r.Outcome == GameFixes.Outcome.Applied || r.Outcome == GameFixes.Outcome.AlreadyApplied ? 0 : 1;
+        }
+
+        // Shows (and with --loading-rescue releases) a KH1 loading screen stuck on its voice slots.
+        static int LoadingCommand(string[] a, bool rescue)
+        {
+            int pid;
+            if (a.Length < 2 || !int.TryParse(a[1], out pid)) { Console.Error.WriteLine("usage: " + a[0] + " <pid of " + LoadingGuard.GameName + ".exe>"); return 2; }
+            string path = Native.GetImagePath(pid);
+            if (path == null) { Console.Error.WriteLine("process " + pid + " not found"); return 1; }
+            if (!Path.GetFileNameWithoutExtension(path).Equals(LoadingGuard.GameName, StringComparison.OrdinalIgnoreCase))
+            {
+                Console.Error.WriteLine("this command only applies to " + LoadingGuard.GameName + ".exe");
+                return 2;
+            }
+            string text;
+            int code = LoadingGuard.Inspect(pid, path, rescue, out text);
+            Console.WriteLine(text);
+            Log.Info(a[0] + " pid " + pid + ": " + text.Replace(Environment.NewLine, " | "));
+            return code;
         }
 
         static uint ArgUInt(string[] a, string name, uint def)
@@ -172,6 +199,74 @@ namespace KHHotfix
         }
 
         const ulong SyntheticBase = 0x00007FF800000000UL;
+
+        sealed class FakeMemory : LoadingGuard.IMemory
+        {
+            public readonly Dictionary<long, byte[]> Regions = new Dictionary<long, byte[]>();
+            public int Writes;
+
+            byte[] Find(long address, int length, out int offset)
+            {
+                foreach (KeyValuePair<long, byte[]> r in Regions)
+                {
+                    if (address >= r.Key && address + length <= r.Key + r.Value.Length) { offset = (int)(address - r.Key); return r.Value; }
+                }
+                offset = 0;
+                return null;
+            }
+
+            public byte[] Read(long address, int length)
+            {
+                int offset;
+                byte[] region = Find(address, length, out offset);
+                return region == null ? null : region.Skip(offset).Take(length).ToArray();
+            }
+
+            public bool Write(long address, byte[] data)
+            {
+                int offset;
+                byte[] region = Find(address, data.Length, out offset);
+                if (region == null) return false;
+                data.CopyTo(region, offset);
+                Writes++;
+                return true;
+            }
+        }
+
+        // A tiny 64-bit PE whose .text holds the code shapes the loading guard looks for, wired up like the real game.
+        static byte[] MakeLoadingImage(bool ambiguous, bool brokenChain)
+        {
+            const int Raw0 = 0x400, Rva0 = 0x1000, TextSize = 0x1000, Pe = 0x80, Opt = Pe + 24, OptSize = 0xF0, Sec = Opt + OptSize;
+            var f = new byte[Raw0 + TextSize];
+            for (int i = Raw0; i < f.Length; i++) f[i] = 0xCC;
+            f[0] = (byte)'M'; f[1] = (byte)'Z';
+            BitConverter.GetBytes(Pe).CopyTo(f, 0x3C);
+            BitConverter.GetBytes(0x00004550u).CopyTo(f, Pe);
+            BitConverter.GetBytes((ushort)1).CopyTo(f, Pe + 6);
+            BitConverter.GetBytes(0x669E37CEu).CopyTo(f, Pe + 8);
+            BitConverter.GetBytes((ushort)OptSize).CopyTo(f, Pe + 20);
+            BitConverter.GetBytes((ushort)0x20B).CopyTo(f, Opt);
+            BitConverter.GetBytes(0x100000u).CopyTo(f, Opt + 56);
+            System.Text.Encoding.ASCII.GetBytes(".text").CopyTo(f, Sec);
+            BitConverter.GetBytes((uint)TextSize).CopyTo(f, Sec + 8);
+            BitConverter.GetBytes((uint)Rva0).CopyTo(f, Sec + 12);
+            BitConverter.GetBytes((uint)TextSize).CopyTo(f, Sec + 16);
+            BitConverter.GetBytes((uint)Raw0).CopyTo(f, Sec + 20);
+            Action<int, string> put = delegate(int rva, string sig)
+            {
+                int o = rva - Rva0 + Raw0;
+                foreach (string tok in sig.Split(' ')) f[o++] = tok == "??" ? (byte)0 : byte.Parse(tok, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+            };
+            Action<int, int> rel = delegate(int dispRva, int target) { BitConverter.GetBytes(target - (dispRva + 4)).CopyTo(f, dispRva - Rva0 + Raw0); };
+            put(0x1000, LoadingGuard.SigVoiceBusy); rel(0x1003, 0x50000); rel(0x100A, 0x500A0);
+            put(0x1100, LoadingGuard.SigBankTask.Replace("74 ??", "74 30"));                    // step 0 code at 0x1141
+            put(0x1141, LoadingGuard.SigBankWait); rel(0x1144, 0x1200);
+            put(0x1200, LoadingGuard.SigVoiceWait); rel(0x1212, brokenChain ? 0x1100 : 0x1000);
+            put(0x1300, LoadingGuard.SigBankRequest); rel(0x1306, 0x1100); rel(0x130F, 0x60000);
+            put(0x1340, LoadingGuard.SigBankRequest); rel(0x1346, 0x1100); rel(0x134F, ambiguous ? 0x61000 : 0x60000);
+            put(0x1400, LoadingGuard.SigLoadPending); rel(0x1407, 0x70000); rel(0x141F, 0x70000);
+            return f;
+        }
 
         // Minimal minidump: exception (access violation reading 0x1234) in kernel32's code, and a stack holding
         // junk plus one genuine return address (the instruction after a call in kernel32's .text).
@@ -277,6 +372,61 @@ namespace KHHotfix
                 "every catalogued fix has room for the patch");
             GameFixes.PeInfo me = GameFixes.ReadPe(File.ReadAllBytes(System.Windows.Forms.Application.ExecutablePath));
             Expect(me != null && me.TextRawSize > 0 && me.SizeOfImage > 0, "PE reader finds the .text section");
+
+            Console.WriteLine("Endless loading screen guard: locating the game data");
+            LoadingGuard.Layout lay = LoadingGuard.Locate(MakeLoadingImage(false, false));
+            Expect(lay.Problem == null && lay.VoiceSlots == 0x50000 && lay.BankScheduler == 0x60000 && lay.BankTask == 0x1100 && lay.LoadPending == 0x70000
+                && lay.TimeDateStamp == 0x669E37CE, "voice slots, sound-bank task list, task function and load flag resolved from rip-relative code");
+            lay = LoadingGuard.Locate(MakeLoadingImage(true, false));
+            Expect(lay.Problem != null && lay.Problem.Contains("ambiguous"), "request code using different task lists is rejected");
+            lay = LoadingGuard.Locate(MakeLoadingImage(false, true));
+            Expect(lay.Problem != null && lay.Problem.Contains("does not wait"), "a task that does not wait for the voice slots is rejected");
+            Expect(LoadingGuard.Locate(File.ReadAllBytes(System.Windows.Forms.Application.ExecutablePath)).Problem != null, "a different program is rejected");
+
+            Console.WriteLine("Endless loading screen guard: decisions (simulated game memory)");
+            {
+                const long imageBase = 0x0000000140000000L, taskAddr = 0x0000000200000000L;
+                var layout = new LoadingGuard.Layout { VoiceSlots = 0x1000, BankScheduler = 0x2000, BankTask = 0x3000, LoadPending = 0x4000 };
+                var mem = new FakeMemory();
+                byte[] image = new byte[0x5000], task = new byte[0x38];
+                mem.Regions[imageBase] = image;
+                mem.Regions[taskAddr] = task;
+                BitConverter.GetBytes(taskAddr).CopyTo(image, 0x2010);           // first task in the sound-bank list ...
+                BitConverter.GetBytes(imageBase + 0x3000).CopyTo(task, 0x10);    // ... is a sound-bank task at step 0
+                BitConverter.GetBytes(0x7000UL).CopyTo(task, 0x20);
+                image[0x1000] = 4; image[0x1003] = 0x21;                         // voice slot 0 "playing" bank 0 sound 0x21
+                var core = new LoadingGuard.Core(mem, imageBase, layout) { RescueSeconds = 10 };
+                int hangs = 0;
+                core.UnknownHang = delegate { hangs++; };
+                DateTime t0 = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+                for (int s = 0; s <= 300; s++) core.Tick(t0.AddSeconds(s));
+                Expect(image[0x1000] == 4 && mem.Writes == 0 && hangs == 0, "no area load pending: nothing is touched, even with a busy slot and a waiting request");
+                image[0x4000] = 1;
+                DateTime t1 = t0.AddSeconds(400);
+                for (int s = 0; s < 10; s++) core.Tick(t1.AddSeconds(s));
+                Expect(image[0x1000] == 4 && mem.Writes == 0, "a load waiting less than LoadingRescueSeconds is left alone");
+                core.Tick(t1.AddSeconds(10));
+                Expect(image[0x1000] == 0 && image[0x1003] == 0x21 && mem.Writes == 1 && core.Rescues == 1, "a load stuck on a busy voice slot is released (only the state byte changes)");
+                image[0x1000] = 4; image[0x1028] = 2;
+                BitConverter.GetBytes((short)1).CopyTo(task, 0x1A);
+                for (int s = 11; s < 40; s++) core.Tick(t1.AddSeconds(s));
+                Expect(mem.Writes == 1, "a request that no longer waits for the voices is never touched");
+                BitConverter.GetBytes((short)0).CopyTo(task, 0x1A);
+                for (int s = 40; s < 60; s++) { BitConverter.GetBytes(0x7000UL + (ulong)s).CopyTo(task, 0x20); core.Tick(t1.AddSeconds(s)); }
+                Expect(mem.Writes == 1, "a load that keeps making progress (new requests every second) is never touched");
+                for (int s = 60; s <= 70; s++) core.Tick(t1.AddSeconds(s));
+                Expect(image[0x1000] == 0 && image[0x1028] == 0 && core.Rescues == 2, "every busy slot is released");
+                int writes = mem.Writes;
+                for (int s = 71; s < 69 + LoadingGuard.UnknownHangSeconds; s++) core.Tick(t1.AddSeconds(s));
+                Expect(hangs == 0, "no unknown-hang report before " + LoadingGuard.UnknownHangSeconds + " s");
+                for (int s = 69 + LoadingGuard.UnknownHangSeconds; s <= 100 + LoadingGuard.UnknownHangSeconds; s++) core.Tick(t1.AddSeconds(s));
+                Expect(hangs == 1 && mem.Writes == writes, "a load stuck for another reason is reported once and nothing is written");
+                image[0x4000] = 0;
+                core.Tick(t1.AddSeconds(500));
+                image[0x4000] = 1;
+                for (int s = 501; s < 505; s++) core.Tick(t1.AddSeconds(s));
+                Expect(hangs == 1, "a new load starts with fresh timers");
+            }
 
             Console.WriteLine("Crash dump analysis (synthetic dump)");
             string dumpDir = Path.Combine(Path.GetTempPath(), "KHHotfix-dumptest-" + Guid.NewGuid().ToString("N"));

@@ -24,6 +24,7 @@ namespace KHHotfix
         public IntPtr Handle;
         public bool HadWindow, WindowGoneLogged, Exited, KilledByHotfix, FixDone;
         public int FixAttempts;
+        public LoadingGuard Loading;
         public DateTime LastVisibleUtc = DateTime.UtcNow, HungSinceUtc = DateTime.MinValue, ExitedUtc;
         public uint ExitCode;
         public string KillReason;

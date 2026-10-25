@@ -159,7 +159,11 @@ namespace KHHotfix
             timer.Stop();
             timer.Dispose();
             hotkey.Dispose();
-            foreach (TrackedProcess t in live.Values) { if (t.OwnsHandle && t.Handle != IntPtr.Zero) Native.CloseHandle(t.Handle); }
+            foreach (TrackedProcess t in live.Values)
+            {
+                if (t.Loading != null) t.Loading.Dispose();
+                if (t.OwnsHandle && t.Handle != IntPtr.Zero) Native.CloseHandle(t.Handle);
+            }
         }
 
         void SafeTick()
@@ -177,6 +181,7 @@ namespace KHHotfix
             DateTime now = DateTime.UtcNow;
             Discover();
             ApplyFixes();
+            GuardLoading(now);
             PollExits();
             Watch(now);
             if (tick % 2 == 0) saves.Poll();
@@ -234,6 +239,18 @@ namespace KHHotfix
             }
         }
 
+        // KH1 loading screens that never end (see LoadingGuard).
+        void GuardLoading(DateTime now)
+        {
+            if (Settings.LoadingRescueSeconds <= 0) return;
+            foreach (TrackedProcess t in live.Values)
+            {
+                if (t.Handle == IntPtr.Zero || !LoadingGuard.Applies(t)) continue;
+                if (t.Loading == null) t.Loading = new LoadingGuard(t, postNotices.Add);
+                t.Loading.Tick(now);
+            }
+        }
+
         void PollExits()
         {
             foreach (TrackedProcess t in live.Values.ToList())
@@ -244,6 +261,7 @@ namespace KHHotfix
                 t.Exited = true;
                 t.ExitCode = code;
                 t.ExitedUtc = DateTime.UtcNow;
+                if (t.Loading != null) t.Loading.Dispose();
                 if (t.OwnsHandle) Native.CloseHandle(t.Handle);
                 t.Handle = IntPtr.Zero;
                 live.Remove(t.Pid);

@@ -183,11 +183,33 @@ namespace KHHotfix
         [DllImport("psapi.dll", SetLastError = true)] static extern bool EnumProcessModulesEx(IntPtr h, [Out] IntPtr[] modules, int cb, out int needed, uint filter);
         [DllImport("psapi.dll", CharSet = CharSet.Unicode)] static extern uint GetModuleBaseName(IntPtr h, IntPtr module, StringBuilder name, int size);
 
-        static byte[] Read(IntPtr h, long addr, int len)
+        internal static byte[] Read(IntPtr h, long addr, int len)
         {
             var buf = new byte[len];
             IntPtr got;
             return ReadProcessMemory(h, new IntPtr(addr), buf, new IntPtr(len), out got) && got.ToInt64() == len ? buf : null;
+        }
+
+        // Writes game data (writable pages only; code is patched by Apply).
+        internal static bool WriteData(IntPtr h, long addr, byte[] data)
+        {
+            IntPtr written;
+            return WriteProcessMemory(h, new IntPtr(addr), data, new IntPtr(data.Length), out written) && written.ToInt64() == data.Length;
+        }
+
+        // Base address of the main executable in the process and its PE header as mapped; 0 while the process is still starting.
+        internal static long ImageBase(IntPtr h, out PeInfo live)
+        {
+            live = null;
+            var pbi = new PROCESS_BASIC_INFORMATION();
+            int ret;
+            if (NtQueryInformationProcess(h, 0, ref pbi, Marshal.SizeOf(pbi), out ret) != 0) return 0;
+            byte[] peb = Read(h, pbi.PebBaseAddress.ToInt64(), 0x18);
+            if (peb == null) return 0;
+            long imageBase = BitConverter.ToInt64(peb, 0x10);
+            byte[] header = imageBase == 0 ? null : Read(h, imageBase, 0x1000);
+            live = header == null ? null : ReadPe(header.Concat(new byte[0x400]).ToArray());
+            return live == null ? 0 : imageBase;
         }
 
         static long FindModule(IntPtr h, string name)
@@ -218,15 +240,9 @@ namespace KHHotfix
             if (h == IntPtr.Zero) return new Result(Outcome.Failed, "cannot open process " + pid + " (error " + Marshal.GetLastWin32Error() + ")");
             try
             {
-                var pbi = new PROCESS_BASIC_INFORMATION();
-                int ret;
-                if (NtQueryInformationProcess(h, 0, ref pbi, Marshal.SizeOf(pbi), out ret) != 0) return new Result(Outcome.Retry, "process information not available yet");
-                byte[] peb = Read(h, pbi.PebBaseAddress.ToInt64(), 0x18);
-                if (peb == null) return new Result(Outcome.Retry, "process not initialized yet");
-                long imageBase = BitConverter.ToInt64(peb, 0x10);
-                byte[] header = Read(h, imageBase, 0x1000);
-                PeInfo live = header == null ? null : ReadPe(header.Concat(new byte[0x400]).ToArray());
-                if (live == null) return new Result(Outcome.Retry, "image not mapped yet");
+                PeInfo live;
+                long imageBase = ImageBase(h, out live);
+                if (imageBase == 0) return new Result(Outcome.Retry, "process not initialized yet");
                 if (pe == null || live.TimeDateStamp != pe.TimeDateStamp || live.SizeOfImage != pe.SizeOfImage)
                     return new Result(Outcome.NotApplicable, "the running program is a different build than " + exePath);
                 IntPtr ourKernel32 = GetModuleHandle("kernel32.dll");

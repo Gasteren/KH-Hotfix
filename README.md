@@ -1,7 +1,8 @@
 # KH 1.5+2.5 Hotfix
 
 Unofficial fix-up for **KINGDOM HEARTS -HD 1.5+2.5 ReMIX-** on Steam (Windows). It protects your saves from
-the port's crashes, removes the known crash triggers and fixes the "Quit Game" freeze.
+the port's crashes, removes the known crash triggers, fixes the "Quit Game" freeze and releases KH1's endless
+loading screens.
 No game files are changed, no administrator rights are needed, and the uninstaller reverts everything.
 
 > Not affiliated with or endorsed by Square Enix or Disney. No game files are included. Use at your own risk.
@@ -35,6 +36,7 @@ The Start menu folder **KH Hotfix** contains *Restore a KINGDOM HEARTS save*, *K
 | "Save data is corrupt" or lost progress | Quit the game, run *Restore a KINGDOM HEARTS save* and pick the newest version that is not marked *damaged*. |
 | "Failed to save game data" | Run *KH Hotfix diagnostics*. If Controlled Folder Access (ransomware protection) is on, run `Install.cmd` again and answer **Y** when it offers to allow the game. |
 | The game freezes | Press **Ctrl+Alt+K**: your saves are backed up and the game is closed. |
+| A loading screen never ends (KH1, the icon keeps spinning) | Wait: the hotfix releases it after 10 seconds and the game continues. If it is still loading after 2 minutes, the cause is a different one: a snapshot was saved, please report it like a crash. |
 | The game crashed | Your saves were backed up. `Reports\<date>\summary.txt` in the hotfix folder contains a crash analysis; please share it in a [crash report issue](https://github.com/Gasteren/KH-Hotfix/issues/new?template=crash-report.md) so the crash can be fixed in code. |
 | The installer says Windows blocked the program | Smart App Control or an antivirus blocks unsigned programs. The hotfix is compiled on your PC from the source code in `src\`; allow it in your antivirus or don't use the hotfix. |
 | The game closes immediately (code `0x00000035`) | The game is shared through Steam Families and another family member is playing it. |
@@ -48,6 +50,7 @@ Logs are in `Logs\` and crash reports in `Reports\` inside the hotfix folder.
 | Random crashes (pause menu, loading screens, combat) | The engine is unstable above 60 FPS, and on high-refresh monitors it runs far above 60 by default. |
 | Crashes on Alt+Tab | Exclusive-fullscreen swap-chain handling. |
 | Freeze or crash when choosing *Quit Game* | **Fixed in code by the hotfix.** After the main loop ends, the engine's application destructor frees a buffer that was already released (access violation in `_aligned_free`) or deadlocks. Found by analyzing a real crash dump. |
+| Endless loading screen in KH1 (the game keeps running, the loading icon spins forever) | **Released by the hotfix.** Before an area's character sound banks are loaded, the game waits until its four character voice slots are idle. A sound that never reports "finished" keeps its slot busy forever, so the area load never completes. Found by analyzing a game stuck this way. |
 | Lost or "corrupt" saves | Each game keeps all its slots in one file (`KHFM_WW.png`, `KHIIFM_WW.png`, ...) that is rewritten in place. A crash while saving leaves it cut off; the game then reports *"Save data is corrupt and will be deleted"* and deletes it. |
 | *"Failed to save game data"* | The game finds the Documents folder through legacy ANSI Windows APIs, so non-ASCII profile paths, OneDrive, Controlled Folder Access, read-only files or a full disk make every save fail. |
 | Stutter and uneven frame pacing | VRR (G-SYNC/FreeSync) and refresh rates above 60 Hz. |
@@ -71,12 +74,16 @@ Steam starts the game through `KHHotfix.exe` (launch option `"<hotfix folder>\KH
    the game's memory with a clean exit that keeps the game's exit code (KH1, Re:CoM, KH2, BBS and Theater). The game
    files on disk are never changed, and the fix is only applied when the code matches the known game version
    byte for byte, so a game update can't be broken by it. Verified on all five games.
-6. **Freeze watchdog** (fallback): a game process that closed its window but never exits is closed after 20 seconds; a
+6. **Endless loading screens released (KH1)**: when an area load has been blocked for 10 seconds by a character voice
+   slot whose sound never finished, the hotfix marks that slot idle in the game's memory and the load continues at
+   once. It only acts in exactly that state, never during normal loading or gameplay, and only when the game's code
+   matches the known version. A load stuck for another reason is snapshotted after 2 minutes for analysis.
+7. **Freeze watchdog** (fallback): a game process that closed its window but never exits is closed after 20 seconds; a
    window that stays *Not responding* for 2 minutes is closed too. Saves are backed up first.
-7. **Panic hotkey Ctrl+Alt+K**: backs up the saves and closes a frozen game, even in fullscreen.
-8. **Crash reports with analysis**: decoded exit codes, the game's own crash dump with an automatic call-stack analysis
+8. **Panic hotkey Ctrl+Alt+K**: backs up the saves and closes a frozen game, even in fullscreen.
+9. **Crash reports with analysis**: decoded exit codes, the game's own crash dump with an automatic call-stack analysis
    and crash signature (no debugger needed), Windows Error Reporting data and event-log entries in `Reports\<date>\`.
-9. **Never blocks playing**: if the hotfix itself fails, the game is started normally.
+10. **Never blocks playing**: if the hotfix itself fails, the game is started normally.
 
 ## Playing above 60 FPS and helping fix the remaining crashes
 
@@ -110,7 +117,8 @@ Your real save files are never deleted; the hotfix only adds backups.
 
 `KHHotfix.ini` in the hotfix folder: backup retention, auto-repair, target refresh rate (`0` = never touch the
 display), watchdog timings, panic hotkey, dialogs, extra game arguments (for example `-reboot=true` to skip the
-logo videos) and `FixQuitCrash` (the in-memory Quit Game fix, on by default).
+logo videos), `FixQuitCrash` (the in-memory Quit Game fix, on by default) and `LoadingRescueSeconds` (how long a
+KH1 area load may be blocked by a stuck voice before it is released; `0` = off).
 
 ## For developers
 
@@ -119,14 +127,19 @@ logo videos) and `FixQuitCrash` (the in-memory Quit Game fix, on by default).
   When run from a git clone the hotfix stays in place instead of moving to `%LOCALAPPDATA%`. Put personal settings in
   `KHHotfix.local.ini` there: it overrides `KHHotfix.ini` and is ignored by git.
 - Tests: `KHHotfixCli.exe --selftest` (unit tests), `tests\Run-Tests.ps1` (end-to-end with a fake game: crash,
-  quit freeze, frozen window, save corruption, deleted save), `tests\Test-SteamConfig.ps1` (Steam config editing),
+  quit freeze, frozen window, save corruption, deleted save; plus read-only checks against the installed game), `tests\Test-SteamConfig.ps1` (Steam config editing),
   `tests\Test-Install.ps1` (fresh install from a downloaded ZIP, update, uninstall).
 - CLI: `--check`, `--backup`, `--restore-backup <gz> <save>`, `--display-info`, `--restore-display`, `--nv-status`,
   `--nv-apply [--fps N] [--no-vsync] [--no-gsync-off]`, `--nv-revert`, `--fixes-scan <game folder>`,
-  `--fixes-apply <pid> [--exit-code <marker>]`, `--analyze-dump <file.dmp> [game folder]`, `--paths`, `--version`.
+  `--fixes-apply <pid> [--exit-code <marker>]`, `--loading-status <pid>`, `--loading-rescue <pid>`,
+  `--analyze-dump <file.dmp> [game folder]`, `--paths`, `--version`.
 - Code fixes live in `src\GameFixes.cs`: each one is a byte signature (must match exactly once in the executable) plus
   the replacement code. `--fixes-apply <pid> --exit-code 0x4B51` makes the quit fix exit with a marker code, which
   proves on a live game that the patched path runs.
+- The endless-loading guard lives in `src\LoadingGuard.cs`. It finds the voice slots, the sound-bank task list and the
+  area-load flag through the code that uses them (including the call chain from the sound-bank task to the voice
+  check). `--loading-status <pid>` shows what a running KH1 is waiting for; `--loading-rescue <pid>` releases a stuck
+  load immediately.
 
 Sources: PCGamingWiki (Kingdom Hearts HD 1.5 + 2.5 ReMIX), Steam Community discussions for app 2552430,
 the KH-ReFined feature list, NVIDIA's public NVAPI headers.

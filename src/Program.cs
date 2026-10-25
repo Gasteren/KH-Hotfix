@@ -132,6 +132,7 @@ namespace KHHotfix
         public static string SavesRoot = "";
         public static string ExtraGameArgs = "";
         public static bool FixQuitCrash = true;
+        public static int LoadingRescueSeconds = 10;
 
         public static string FilePath { get { return Path.Combine(Paths.Root, "KHHotfix.ini"); } }
         // Personal overrides on top of KHHotfix.ini (ignored by git, so a clone's defaults stay untouched).
@@ -168,6 +169,7 @@ namespace KHHotfix
                     case "savesroot": SavesRoot = val; break;
                     case "extragameargs": ExtraGameArgs = val; break;
                     case "fixquitcrash": FixQuitCrash = Bool(val, FixQuitCrash); break;
+                    case "loadingrescueseconds": LoadingRescueSeconds = Int(val, LoadingRescueSeconds, 0, 3600); break;
                 }
             }
         }

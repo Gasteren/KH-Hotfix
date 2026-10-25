@@ -9,6 +9,9 @@
 param([string]$Save, [int]$Version = 0, [switch]$LatestGood, [switch]$Yes)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'KHHotfix.Common.ps1')
+$forward = Get-InstalledCopyCommand 'Restore-KHSave.ps1' $PSBoundParameters
+if ($forward) { & powershell.exe @forward; exit $LASTEXITCODE }
+if (-not (Test-Path -LiteralPath $script:Cli)) { Write-Host 'KH Hotfix is not installed yet - run Install.cmd first.'; exit 1 }
 
 $names = @{
     'KHFM_WW.png' = 'Kingdom Hearts Final Mix'; 'KHReCoM_WW.png' = 'Re:Chain of Memories'; 'KHIIFM_WW.png' = 'Kingdom Hearts II Final Mix'

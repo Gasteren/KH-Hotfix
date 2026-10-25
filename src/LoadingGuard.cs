@@ -453,7 +453,7 @@ namespace KHHotfix
                 HangDump.Write(t, "loading screen stuck");
                 if (notices != null)
                     notices.AboutReport(t.Name + ".exe stayed on a loading screen for over " + (UnknownHangSeconds / 60) + " minutes for a reason the hotfix does not know yet. "
-                        + "A snapshot was saved; please report it with Reports\\<date>\\summary.txt (see the README).");
+                        + "A snapshot was saved; please report it with " + Program.ReportTool + " (it attaches the snapshot).");
             };
             core.AudioLost = delegate(string what)
             {

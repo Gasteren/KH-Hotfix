@@ -16,7 +16,7 @@
 .PARAMETER NoNvidia
   Do not change NVIDIA driver settings.
 .PARAMETER Fps
-  Driver frame-rate cap for the KH executables (default 60, 0 = no cap).
+  Driver frame-rate cap for the KH executables (default 0 = no cap).
 .PARAMETER InPlace
   Run the hotfix from this folder instead of copying it to the install folder.
 .PARAMETER InstallDir
@@ -27,7 +27,7 @@
   Never copy the launch option to the clipboard.
 #>
 [CmdletBinding()]
-param([switch]$Admin, [switch]$RestartSteam, [switch]$SkipSteam, [switch]$NoNvidia, [int]$Fps = 60, [switch]$InPlace,
+param([switch]$Admin, [switch]$RestartSteam, [switch]$SkipSteam, [switch]$NoNvidia, [int]$Fps = 0, [switch]$InPlace,
       [string]$InstallDir, [switch]$NoShortcuts, [switch]$NoClipboard, [string]$ShortcutRoot, [switch]$AdminStepsOnly, [string]$GameDir)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'KHHotfix.Common.ps1')
@@ -111,6 +111,7 @@ if (-not $InPlace -and -not $isClone -and -not $here.Equals($target, [StringComp
 }
 $managed = $here.Equals($target, [StringComparison]::OrdinalIgnoreCase)
 if ((Get-RunningHotfix $here).Count -gt 0) { throw 'KINGDOM HEARTS is running through the hotfix. Quit the game, then run Install.cmd again.' }
+if (Update-HotfixIni $here) { Write-Step 'Settings'; Write-Ok 'The 60 Hz limit while playing is removed (TargetRefreshHz=0)' }
 
 Write-Step 'Building the hotfix from its source code'
 Invoke-HotfixBuild $here
@@ -155,7 +156,8 @@ $state.GpuPrefs = @($recorded.Values)
 Save-HotfixState $state
 Write-Ok "$($script:GameExes.Count) executables set to the high-performance GPU"
 
-Write-Step "NVIDIA driver profile (frame cap $Fps FPS, V-Sync on, G-SYNC off - KH executables only)"
+$nvWhat = if ($Fps -gt 0) { "G-SYNC off, frame cap $Fps FPS" } else { 'G-SYNC off' }
+Write-Step "NVIDIA driver profile ($nvWhat - KH executables only)"
 if ($NoNvidia) { Write-Info 'Skipped (-NoNvidia)' }
 else {
     try {
@@ -163,7 +165,7 @@ else {
         switch ($r.Code) {
             0 { $r.Output -split "`r?`n" | ForEach-Object { Write-Info $_ }; Write-Ok 'Applied' }
             3 { New-Item -ItemType File -Force -Path (Join-Path $script:StateDir 'nvidia-needs-admin.flag') | Out-Null; Write-Warn2 'Needs administrator rights - run Install.cmd -Admin' }
-            4 { Write-Info 'No NVIDIA graphics card - skipped. Set Frame Rate = 60 in the game''s System Settings instead.' }
+            4 { Write-Info 'No NVIDIA graphics card - skipped.' }
             default { Write-Warn2 $r.Output }
         }
     }
@@ -237,12 +239,8 @@ Write-Host @"
 
    Start KINGDOM HEARTS from Steam as usual - the hotfix runs automatically.
 
-   Recommended in-game settings (KH launcher > System Settings, used by all games):
-     Screen Mode  : Borderless Windowed   (exclusive fullscreen crashes on Alt+Tab)
-     Frame Rate   : 60                    (the engine is crash-prone above 60 FPS)
-     Refresh Rate : ON
-
    While playing: Ctrl+Alt+B reports a bug (with a screenshot of the game).
                   Ctrl+Alt+K backs up your saves and force-closes a frozen game.
-   Report a bug, restore a save, diagnostics, uninstall: Start menu > KH Hotfix (or the .cmd files in the folder above).
+   Report a bug, restore a save, uninstall: Start menu > KH Hotfix.
+   Tip: Screen Mode = Borderless Windowed (KH launcher > System Settings) avoids crashes on Alt+Tab.
 "@

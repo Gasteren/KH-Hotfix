@@ -2,3 +2,11 @@
 # Batch files must keep CRLF line endings in clones and in GitHub's ZIP downloads.
 *.cmd -text
 *.exe binary
+
+# Not needed to install, use or uninstall the hotfix: left out of GitHub's "Download ZIP".
+/.github export-ignore
+/tests export-ignore
+/build.cmd export-ignore
+/README.md export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore

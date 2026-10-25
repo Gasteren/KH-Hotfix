@@ -242,7 +242,7 @@ namespace KHHotfix
                 string dev = DisplayGuard.FindPrimary(out cur);
                 if (dev == null) return null;
                 return string.Format(CultureInfo.InvariantCulture, "{0}x{1} @ {2} Hz", cur.dmPelsWidth, cur.dmPelsHeight, cur.dmDisplayFrequency)
-                    + (Settings.TargetRefreshHz > 0 ? " (hotfix switches to " + Settings.TargetRefreshHz + " Hz while playing)" : " (no limit: TargetRefreshHz=0)");
+                    + (Settings.TargetRefreshHz > 0 ? " (hotfix switches to " + Settings.TargetRefreshHz + " Hz while playing)" : "");
             });
             s.Audio = Safe(delegate
             {

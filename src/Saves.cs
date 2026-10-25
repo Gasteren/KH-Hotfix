@@ -405,7 +405,7 @@ namespace KHHotfix
                     {
                         if (okHist.Count > 0 && data.LongLength < okHist[0].Size * 9 / 10)
                             notices.Add(rel + " is much smaller than your last good save (" + data.LongLength.ToString("N0", CultureInfo.InvariantCulture) + " vs "
-                                + okHist[0].Size.ToString("N0", CultureInfo.InvariantCulture) + " bytes). If the game calls it corrupt, quit and run Restore.cmd before saving again.");
+                                + okHist[0].Size.ToString("N0", CultureInfo.InvariantCulture) + " bytes). If the game calls it corrupt, quit and use " + Program.RestoreTool + " before saving again.");
                         continue;
                     }
                 }
@@ -417,7 +417,7 @@ namespace KHHotfix
                 Log.Warn(rel + " is damaged: " + damage);
                 BackupEntry good = okHist.FirstOrDefault();
                 if (good == null) { notices.Add(rel + " is damaged (" + damage + ") and there is no known-good backup yet. The game may report it as corrupt and delete it."); continue; }
-                if (!Settings.AutoHeal) { notices.Add(rel + " is damaged (" + damage + "). Run Restore.cmd to restore the backup from " + good.LocalTimeText + "."); continue; }
+                if (!Settings.AutoHeal) { notices.Add(rel + " is damaged (" + damage + "). Use " + Program.RestoreTool + " to restore the backup from " + good.LocalTimeText + "."); continue; }
                 string q = Quarantine(f, data, r.Status == SaveStatus.Ok ? "Shortened" : r.Status.ToString());
                 AtomicWrite(f, ReadGz(good.FullPath));
                 Log.Warn("Auto-heal: restored " + rel + " from " + good.FullPath + "; damaged copy kept at " + q);
@@ -459,7 +459,7 @@ namespace KHHotfix
                 Log.Warn("Save file disappeared during the session: " + Paths.Rel(gone));
                 if (IsPng(gone))
                     SessionNotices.Add("The game deleted " + Paths.Rel(gone) + " at " + DateTime.Now.ToString("t") + " (it does this when it believes a save is corrupt). "
-                        + "The previous version is in the hotfix backups - run Restore.cmd to get it back.");
+                        + "The previous version is in the hotfix backups - use " + Program.RestoreTool + " to get it back.");
             }
             lastSeen = cur;
             foreach (var kv in pending.ToList())

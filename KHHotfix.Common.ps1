@@ -6,7 +6,7 @@ $script:Cli                = Join-Path $PSScriptRoot 'KHHotfixCli.exe'
 $script:Wrapper            = Join-Path $PSScriptRoot 'KHHotfix.exe'
 $script:StateDir           = Join-Path $PSScriptRoot 'State'
 $script:StateFile          = Join-Path $script:StateDir 'install.json'
-$script:ManagedDir         = Join-Path $env:LOCALAPPDATA 'KH-Hotfix'
+$script:ManagedDir         = if ($env:KHHOTFIX_INSTALL_DIR) { $env:KHHOTFIX_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'KH-Hotfix' }   # tests use their own folder
 $script:ShortcutFolderName = 'KH Hotfix'
 $script:GameExes           = @('KINGDOM HEARTS HD 1.5+2.5 ReMIX.exe', 'KINGDOM HEARTS HD 1.5+2.5 Launcher.exe', 'KINGDOM HEARTS FINAL MIX.exe',
                                'KINGDOM HEARTS Re_Chain of Memories.exe', 'KINGDOM HEARTS II FINAL MIX.exe', 'KINGDOM HEARTS Birth by Sleep FINAL MIX.exe',
@@ -144,6 +144,61 @@ function Merge-LocalIni([string]$from, [string]$to) {
         [IO.File]::WriteAllLines($dst, $lines.ToArray(), (New-Object Text.UTF8Encoding($false)))
     }
     $changed
+}
+
+# Settings whose default changed: an installed KHHotfix.ini that still has the old default gets the new one.
+# Returns $true when the file was changed.
+function Update-HotfixIni([string]$root) {
+    $ini = Join-Path $root 'KHHotfix.ini'
+    if (-not (Test-Path -LiteralPath $ini)) { return $false }
+    $text = [IO.File]::ReadAllText($ini)
+    # 1.4.0: the game runs fine above 60 Hz / 60 FPS, so the display is no longer switched to 60 Hz.
+    $new = $text.Replace('; While the game runs, switch the primary monitor to this refresh rate (0 = never touch the display).',
+                         '; While the game runs, switch the primary monitor to this refresh rate and restore the original one on exit.')
+    $new = $new.Replace('; The game is unstable and stutters above 60 Hz/60 FPS; the original refresh rate is restored on exit.', '; 0 = never touch the display (default).')
+    $new = [regex]::Replace($new, '(?m)^TargetRefreshHz=60(?=\r?$)', 'TargetRefreshHz=0')
+    if ($new -eq $text) { return $false }
+    [IO.File]::WriteAllText($ini, $new, (New-Object Text.UTF8Encoding($false)))
+    $true
+}
+
+# Folder of the installed hotfix: the copy Steam starts the game through, else the default install folder; $null
+# when the hotfix is not installed. With KHHOTFIX_INSTALL_DIR set (tests) only that folder is considered.
+function Find-InstalledHotfix {
+    $candidates = @()
+    if (-not $env:KHHOTFIX_INSTALL_DIR) {
+        try {
+            $account = Get-SteamAccountId
+            if ($account) {
+                $m = [regex]::Match((Get-KHLaunchOption $account), '"([^"]+)\\KHHotfix\.exe"\s+%command%')
+                if ($m.Success) { $candidates += $m.Groups[1].Value }
+            }
+        }
+        catch { }
+    }
+    $candidates += $script:ManagedDir
+    foreach ($c in $candidates) {
+        if ((Test-Path -LiteralPath (Join-Path $c 'State\install.json')) -and (Test-Path -LiteralPath (Join-Path $c 'KHHotfix.Common.ps1'))) {
+            return [IO.Path]::GetFullPath($c).TrimEnd('\')
+        }
+    }
+    $null
+}
+
+# A downloaded copy that was never installed (Install.cmd copies the hotfix to its install folder) runs the tools of
+# the installed copy, which has the backups, the built program and the install record. Returns the powershell.exe
+# arguments for that, or $null to run here.
+function Get-InstalledCopyCommand([string]$scriptName, $boundParameters) {
+    if (Test-Path -LiteralPath $script:StateFile) { return $null }
+    $installed = Find-InstalledHotfix
+    if (-not $installed -or $installed.Equals($script:HotfixRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) { return $null }
+    $pass = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $installed $scriptName))
+    foreach ($k in @($boundParameters.Keys)) {
+        $v = $boundParameters[$k]
+        if ($v -is [Management.Automation.SwitchParameter]) { if ($v.IsPresent) { $pass += "-$k" } }
+        else { $pass += "-$k"; $pass += [string]$v }
+    }
+    $pass
 }
 
 # Deletes the hotfix folder once the window that started the uninstaller has closed.

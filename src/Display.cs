@@ -6,7 +6,7 @@ using System.Text;
 
 namespace KHHotfix
 {
-    // Temporarily switches the primary display to TargetRefreshHz (60) while the game runs.
+    // Optionally switches the primary display to TargetRefreshHz while the game runs (off by default).
     // The change is dynamic (not written to the registry), so a reboot or the restore below returns
     // the monitor to its normal refresh rate even if the hotfix is killed.
     internal sealed class DisplayGuard

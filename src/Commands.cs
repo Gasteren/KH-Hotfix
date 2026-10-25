@@ -32,7 +32,7 @@ namespace KHHotfix
                 case "--display-info": Console.WriteLine(DisplayGuard.Describe(Settings.TargetRefreshHz)); return 0;
                 case "--restore-display": DisplayGuard.RecoverStale(); Console.WriteLine("Display state checked/restored."); return 0;
                 case "--nv-status": return Nv(delegate { return NvDrs.Status(Console.Out); });
-                case "--nv-apply": return Nv(delegate { return NvDrs.Apply(ArgUInt(a, "--fps", 60), !a.Contains("--no-vsync"), !a.Contains("--no-gsync-off"), Console.Out); });
+                case "--nv-apply": return Nv(delegate { return NvDrs.Apply(ArgUInt(a, "--fps", 0), a.Contains("--vsync"), !a.Contains("--no-gsync-off"), Console.Out); });
                 case "--nv-revert": return Nv(delegate { return NvDrs.Revert(Console.Out); });
                 case "--fixes-scan": return FixesScan(a.Length > 1 ? a[1] : null);
                 case "--fixes-apply": return FixesApply(a);
@@ -51,7 +51,7 @@ namespace KHHotfix
                     }
                 default:
                     Console.Error.WriteLine("Unknown command " + a[0] + ". Commands: --check --backup --restore-backup <gz> <target> [--force] --display-info "
-                        + "--restore-display --nv-status --nv-apply [--fps N] [--no-vsync] [--no-gsync-off] --nv-revert --fixes-scan <game folder> "
+                        + "--restore-display --nv-status --nv-apply [--fps N] [--vsync] [--no-gsync-off] --nv-revert --fixes-scan <game folder> "
                         + "--fixes-apply <pid> --loading-status <pid> --loading-rescue <pid> --audio-devices --report-bug [--send ...] "
                         + "--discord-test [--send] --selftest --paths --version");
                     return 2;

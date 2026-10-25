@@ -1,6 +1,6 @@
 // KH 1.5+2.5 Hotfix - runtime hotfix for KINGDOM HEARTS -HD 1.5+2.5 ReMIX- (Steam).
 //
-// build.cmd compiles the files in this folder twice:
+// build.cmd (and Install.cmd) compile the files in this folder twice:
 //   KHHotfix.exe     GUI subsystem: Steam launch-option wrapper  ->  "<dir>\KHHotfix.exe" %command%
 //   KHHotfixCli.exe  console (/define:CLI): maintenance commands used by the PowerShell scripts
 // Language level is C# 5 (the compiler that ships with the .NET Framework 4.x).
@@ -15,15 +15,17 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("KH 1.5+2.5 Hotfix")]
 [assembly: System.Reflection.AssemblyProduct("KHHotfix")]
-[assembly: System.Reflection.AssemblyVersion("1.3.1.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.3.1.0")]
+[assembly: System.Reflection.AssemblyVersion("1.4.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.4.0.0")]
 
 namespace KHHotfix
 {
     internal static class Program
     {
-        public const string Version = "1.3.1";
+        public const string Version = "1.4.0";
         public const string Title = "KH 1.5+2.5 Hotfix";
+        public const string RestoreTool = "Start menu > KH Hotfix > Restore a KINGDOM HEARTS save";
+        public const string ReportTool = "Start menu > KH Hotfix > Report a KINGDOM HEARTS bug";
 #if CLI
         public static readonly bool Cli = true;
 #else
@@ -54,7 +56,7 @@ namespace KHHotfix
             if (args.Length == 0)
             {
                 string usage = "KHHotfix " + Version + "\r\n\r\nSet this as the Steam launch option of KINGDOM HEARTS -HD 1.5+2.5 ReMIX-:\r\n\r\n    \""
-                    + Paths.ExePath + "\" %command%\r\n\r\nSee README.md for details.";
+                    + Paths.ExePath + "\" %command%\r\n\r\nDetails: https://github.com/Gasteren/KH-Hotfix";
                 if (Cli) Console.WriteLine(usage);
                 else MessageBox.Show(usage, Title, MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return 2;
@@ -129,7 +131,7 @@ namespace KHHotfix
         public static int BackupKeep = 40;
         public static int BackupDailyDays = 30;
         public static bool AutoHeal = true;
-        public static int TargetRefreshHz = 60;
+        public static int TargetRefreshHz = 0;
         public static int QuitHangKillSeconds = 20;
         public static int HungWindowKillSeconds = 120;
         public static int ExitGraceSeconds = 8;

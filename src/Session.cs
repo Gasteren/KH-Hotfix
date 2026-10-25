@@ -558,8 +558,8 @@ namespace KHHotfix
             }
             if (crashed.Count > 0)
                 postNotices.Insert(0, string.Join(", ", crashed.Select(c => c.Name + ".exe (0x" + c.ExitCode.ToString("X8") + CrashCodes.Describe(c.ExitCode) + ")"))
-                    + " crashed. Your saves were backed up; a crash report was written to " + dir + ". Use Restore.cmd if the game now reports a save as corrupt."
-                    + (known.Count > 0 ? " Recognized: " + string.Join("; ", known.Distinct()) + "." : " Sharing Reports\\" + Path.GetFileName(dir) + "\\summary.txt helps to fix this crash."),
+                    + " crashed. Your saves were backed up. If the game now says a save is corrupt, use " + Program.RestoreTool + "."
+                    + (known.Count > 0 ? " Recognized: " + string.Join("; ", known.Distinct()) + "." : " Please report the crash with " + Program.ReportTool + " (it attaches the crash report)."),
                     Notices.AutoReported);
             Log.Info("Crash/hang report written to " + dir);
             return dir;

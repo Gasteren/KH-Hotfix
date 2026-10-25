@@ -6,6 +6,8 @@
 param([int]$Days = 30)
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'KHHotfix.Common.ps1')
+$forward = Get-InstalledCopyCommand 'Diagnose-KH.ps1' $PSBoundParameters
+if ($forward) { & powershell.exe @forward; exit $LASTEXITCODE }
 
 $sb = New-Object System.Text.StringBuilder
 $advice = New-Object System.Collections.Generic.List[string]
@@ -47,7 +49,7 @@ else {
 Section 'Saves'
 Add ((Invoke-Cli @('--paths')).Output)
 $chk = Invoke-Cli @('--check'); Add $chk.Output
-if ($chk.Code -eq 5) { $advice.Add('A save file failed validation - run Restore.cmd and pick the newest version that is not marked damaged.') }
+if ($chk.Code -eq 5) { $advice.Add('A save file failed validation - use Start menu > KH Hotfix > Restore a KINGDOM HEARTS save and pick the newest version that is not marked damaged.') }
 $docs = [Environment]::GetFolderPath('MyDocuments')
 foreach ($ev in 'OneDrive', 'OneDriveConsumer', 'OneDriveCommercial') {
     $od = [Environment]::GetEnvironmentVariable($ev)
@@ -74,9 +76,9 @@ if ($kh) {
 Section 'Display and GPU'
 Add ((Invoke-Cli @('--display-info')).Output)
 foreach ($g in Get-CimInstance Win32_VideoController) { Add "GPU: $($g.Name)  driver $($g.DriverVersion) ($('{0:yyyy-MM-dd}' -f $g.DriverDate))" }
-if ((Get-CimInstance Win32_VideoController).Name -match 'Radeon RX 7\d{3}|Radeon 7[4-8]0M|Z1') { $advice.Add('RDNA3 Radeon GPUs are the worst affected by this port - keep the AMD driver current and stay at 60 FPS.') }
+if ((Get-CimInstance Win32_VideoController).Name -match 'Radeon RX 7\d{3}|Radeon 7[4-8]0M|Z1') { $advice.Add('RDNA3 Radeon GPUs are the worst affected by this port - keep the AMD driver current.') }
 $nv = Invoke-Cli @('--nv-status')
-if ($nv.Code -eq 0) { Add $nv.Output; if ($nv.Output -notmatch 'APPLIED') { $advice.Add('NVIDIA 60 FPS cap not applied - run Install.cmd.') } }
+if ($nv.Code -eq 0) { Add $nv.Output; if ($nv.Output -notmatch 'APPLIED') { $advice.Add('The NVIDIA setting of the hotfix (G-SYNC off for the KH games) is not applied - run Install.cmd.') } }
 
 Section 'Audio'
 $au = Invoke-Cli @('--audio-devices')
@@ -116,7 +118,7 @@ if ($cpu -match 'i[579]-1[34]\d{3}') {
 
 Section 'Recommendations'
 if ($advice.Count -eq 0) { Add 'No problems found.' } else { $i = 1; foreach ($a in $advice) { Add "  $i. $a"; $i++ } }
-Add '  In-game: Screen Mode = Borderless Windowed, Frame Rate = 60, Refresh Rate = ON.'
+Add '  In-game: Screen Mode = Borderless Windowed avoids crashes on Alt+Tab.'
 
 $outDir = Join-Path $script:HotfixRoot 'Reports'
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null

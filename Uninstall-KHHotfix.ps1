@@ -39,6 +39,13 @@ if ($AdminStepsOnly) {
     exit 0
 }
 
+$forward = Get-InstalledCopyCommand 'Uninstall-KHHotfix.ps1' $PSBoundParameters
+if ($forward) {
+    Write-Host "Uninstalling the hotfix installed in $(Split-Path -Parent $forward[4])"
+    & powershell.exe @forward
+    exit $LASTEXITCODE
+}
+
 Write-Host "KH 1.5+2.5 Hotfix uninstaller - $script:HotfixRoot" -ForegroundColor White
 if ((Get-RunningHotfix $script:HotfixRoot).Count -gt 0) { throw 'KINGDOM HEARTS is running through the hotfix. Quit the game first, then run the uninstaller again.' }
 $state = Get-HotfixState

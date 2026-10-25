@@ -15,14 +15,14 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("KH 1.5+2.5 Hotfix")]
 [assembly: System.Reflection.AssemblyProduct("KHHotfix")]
-[assembly: System.Reflection.AssemblyVersion("1.1.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.1.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.2.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.2.0.0")]
 
 namespace KHHotfix
 {
     internal static class Program
     {
-        public const string Version = "1.1.0";
+        public const string Version = "1.2.0";
         public const string Title = "KH 1.5+2.5 Hotfix";
 #if CLI
         public static readonly bool Cli = true;

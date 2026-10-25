@@ -32,6 +32,7 @@ namespace KHHotfix
                 case "--fixes-apply": return FixesApply(a);
                 case "--loading-status": return LoadingCommand(a, false);
                 case "--loading-rescue": return LoadingCommand(a, true);
+                case "--audio-devices": return AudioCommand();
                 case "--analyze-dump":
                     {
                         if (a.Length < 2 || !File.Exists(a[1])) { Console.Error.WriteLine("usage: --analyze-dump <file.dmp> [game folder]"); return 2; }
@@ -43,7 +44,7 @@ namespace KHHotfix
                 default:
                     Console.Error.WriteLine("Unknown command " + a[0] + ". Commands: --check --backup --restore-backup <gz> <target> [--force] --display-info "
                         + "--restore-display --nv-status --nv-apply [--fps N] [--no-vsync] [--no-gsync-off] --nv-revert --fixes-scan <game folder> "
-                        + "--fixes-apply <pid> --loading-status <pid> --loading-rescue <pid> --selftest --paths --version");
+                        + "--fixes-apply <pid> --loading-status <pid> --loading-rescue <pid> --audio-devices --selftest --paths --version");
                     return 2;
             }
         }
@@ -106,6 +107,20 @@ namespace KHHotfix
             Console.WriteLine(text);
             Log.Info(a[0] + " pid " + pid + ": " + text.Replace(Environment.NewLine, " | "));
             return code;
+        }
+
+        // Lists the audio outputs. Exit codes: 0 two or more enabled, 4 exactly one (risky), 5 none, 1 error.
+        static int AudioCommand()
+        {
+            string error;
+            List<AudioDevices.Endpoint> all = AudioDevices.Render(out error);
+            if (all == null) { Console.WriteLine("Audio outputs could not be listed: " + error); return 1; }
+            Console.Write(AudioDevices.Describe(all.Where(e => e.State != AudioDevices.NotPresent).ToList()));
+            int active = all.Count(e => e.State == AudioDevices.Active);
+            Console.WriteLine(active + " audio output(s) enabled.");
+            string warning = AudioDevices.SingleOutputWarning(all);
+            if (warning != null) Console.WriteLine("WARNING: " + warning);
+            return active == 0 ? 5 : active == 1 ? 4 : 0;
         }
 
         static uint ArgUInt(string[] a, string name, uint def)
@@ -234,7 +249,7 @@ namespace KHHotfix
         }
 
         // A tiny 64-bit PE whose .text holds the code shapes the loading guard looks for, wired up like the real game.
-        static byte[] MakeLoadingImage(bool ambiguous, bool brokenChain)
+        static byte[] MakeLoadingImage(bool ambiguous, bool brokenChain, bool foreignAudioSetter = false)
         {
             const int Raw0 = 0x400, Rva0 = 0x1000, TextSize = 0x1000, Pe = 0x80, Opt = Pe + 24, OptSize = 0xF0, Sec = Opt + OptSize;
             var f = new byte[Raw0 + TextSize];
@@ -265,6 +280,13 @@ namespace KHHotfix
             put(0x1300, LoadingGuard.SigBankRequest); rel(0x1306, 0x1100); rel(0x130F, 0x60000);
             put(0x1340, LoadingGuard.SigBankRequest); rel(0x1346, 0x1100); rel(0x134F, ambiguous ? 0x61000 : 0x60000);
             put(0x1400, LoadingGuard.SigLoadPending); rel(0x1407, 0x70000); rel(0x141F, 0x70000);
+            // mov byte [flag], imm8 has one byte after the displacement
+            Action<int, int> rel8 = delegate(int dispRva, int target) { BitConverter.GetBytes(target - (dispRva + 5)).CopyTo(f, dispRva - Rva0 + Raw0); };
+            put(0x1500, LoadingGuard.SigAudioInit); rel8(0x1513, 0x80001);
+            put(0x1600, LoadingGuard.SigAudioFailedSetter); rel8(0x1602, foreignAudioSetter ? 0x80002 : 0x80001);
+            put(0x1700, LoadingGuard.SigVoiceLookup); rel(0x170D, 0x81000); rel(0x1714, 0x81100); rel(0x1724, 0x81200); rel(0x172B, 0x81300);
+            put(0x1780, LoadingGuard.SigVoiceIsPlaying);
+            put(0x17A0, LoadingGuard.SigVoiceFinish);
             return f;
         }
 
@@ -377,6 +399,11 @@ namespace KHHotfix
             LoadingGuard.Layout lay = LoadingGuard.Locate(MakeLoadingImage(false, false));
             Expect(lay.Problem == null && lay.VoiceSlots == 0x50000 && lay.BankScheduler == 0x60000 && lay.BankTask == 0x1100 && lay.LoadPending == 0x70000
                 && lay.TimeDateStamp == 0x669E37CE, "voice slots, sound-bank task list, task function and load flag resolved from rip-relative code");
+            Expect(lay.AudioFailed == 0x80001, "audio-failure flag found through the sound init code and its single OnCriticalError setter");
+            Expect(lay.VoiceLink == 0x81000 && lay.VoiceList == 0x81100 && lay.VoiceStride == 0x81200 && lay.VoicePool == 0x81300,
+                "voice pool globals resolved from the voice lookup code (with the playing test and the game's own 'finished' write)");
+            lay = LoadingGuard.Locate(MakeLoadingImage(false, false, true));
+            Expect(lay.Problem == null && lay.AudioFailed == 0 && lay.VoicePool == 0, "audio flag without a matching OnCriticalError setter is not trusted (guard still works)");
             lay = LoadingGuard.Locate(MakeLoadingImage(true, false));
             Expect(lay.Problem != null && lay.Problem.Contains("ambiguous"), "request code using different task lists is rejected");
             lay = LoadingGuard.Locate(MakeLoadingImage(false, true));
@@ -426,6 +453,86 @@ namespace KHHotfix
                 image[0x4000] = 1;
                 for (int s = 501; s < 505; s++) core.Tick(t1.AddSeconds(s));
                 Expect(hangs == 1, "a new load starts with fresh timers");
+            }
+
+            Console.WriteLine("Endless loading screen guard: failed sound output (simulated game memory)");
+            {
+                const long imageBase = 0x0000000140000000L, taskAddr = 0x0000000200000000L;
+                var layout = new LoadingGuard.Layout { VoiceSlots = 0x1000, BankScheduler = 0x2000, BankTask = 0x3000, LoadPending = 0x4000, AudioFailed = 0x4800 };
+                Func<int, LoadingGuard.Core> setup = null;
+                byte[] image = null, task = null;
+                FakeMemory mem = null;
+                int lost = 0;
+                setup = delegate(int rescueSeconds)
+                {
+                    mem = new FakeMemory();
+                    image = new byte[0x5000]; task = new byte[0x38];
+                    mem.Regions[imageBase] = image;
+                    mem.Regions[taskAddr] = task;
+                    BitConverter.GetBytes(taskAddr).CopyTo(image, 0x2010);
+                    BitConverter.GetBytes(imageBase + 0x3000).CopyTo(task, 0x10);
+                    image[0x1000] = 4; image[0x1003] = 0x21;
+                    lost = 0;
+                    var c = new LoadingGuard.Core(mem, imageBase, layout) { RescueSeconds = rescueSeconds };
+                    c.AudioLost = delegate { lost++; };
+                    return c;
+                };
+                DateTime t0 = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+                LoadingGuard.Core core = setup(10);
+                core.Tick(t0);
+                Expect(lost == 0 && !core.AudioFailed(), "working sound output: nothing reported");
+                image[0x4800] = 1;
+                core.Tick(t0.AddSeconds(1));
+                core.Tick(t0.AddSeconds(2));
+                Expect(lost == 1 && core.AudioFailed() && mem.Writes == 0, "failed sound output is reported once, even without a loading screen, and nothing is written");
+                image[0x4000] = 1;
+                core.Tick(t0.AddSeconds(2.25));
+                Expect(image[0x1000] == 0 && mem.Writes == 1 && core.Rescues == 1, "with failed sound output a stuck load is released on the first check (no waiting)");
+                core = setup(0);
+                image[0x4800] = 1; image[0x4000] = 1;
+                for (int s = 0; s < 60; s++) core.Tick(t0.AddSeconds(s));
+                Expect(lost == 1 && mem.Writes == 0 && image[0x1000] == 4, "LoadingRescueSeconds=0 only reports and never changes the game");
+            }
+
+            Console.WriteLine("Failed sound output: sounds that can never finish (simulated game memory)");
+            {
+                const long imageBase = 0x0000000140000000L, poolAddr = 0x0000000300000000L, link = 0x100;
+                const int stride = 0x200;
+                var layout = new LoadingGuard.Layout { VoiceSlots = 0x1000, BankScheduler = 0x2000, BankTask = 0x3000, LoadPending = 0x4000, AudioFailed = 0x4800,
+                    VoicePool = 0x4810, VoiceStride = 0x4818, VoiceLink = 0x4820, VoiceList = 0x4830 };
+                var mem = new FakeMemory();
+                byte[] image = new byte[0x5000], pool = new byte[LoadingGuard.VoicePoolSize * stride];
+                mem.Regions[imageBase] = image;
+                mem.Regions[poolAddr] = pool;
+                BitConverter.GetBytes(poolAddr).CopyTo(image, 0x4810);
+                BitConverter.GetBytes((long)stride).CopyTo(image, 0x4818);
+                BitConverter.GetBytes(link).CopyTo(image, 0x4820);
+                Action<int, uint, long, uint> voice = delegate(int index, uint handle, long member, uint status)
+                {
+                    BitConverter.GetBytes(handle).CopyTo(pool, index * stride + LoadingGuard.VoiceHandleOffset);
+                    BitConverter.GetBytes(member).CopyTo(pool, index * stride + (int)link + 0x10);
+                    BitConverter.GetBytes(status).CopyTo(pool, index * stride + LoadingGuard.VoiceStatusOffset);
+                };
+                Func<int, uint> statusOf = delegate(int index) { return BitConverter.ToUInt32(pool, index * stride + LoadingGuard.VoiceStatusOffset); };
+                long list = imageBase + 0x4830;
+                voice(3, 0x1203, list, 4);         // playing forever
+                voice(7, 0x0807, list + 8, 4);     // not in the active list
+                voice(9, 0x0009, list, 0xC);       // already finished
+                voice(11, 0x020B, list, 4);        // finishes by itself
+                voice(12, 0x000D, list, 4);        // handle of another pool entry (stale)
+                var core = new LoadingGuard.Core(mem, imageBase, layout) { RescueSeconds = 10, StuckSoundSeconds = 5 };
+                DateTime t0 = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+                for (int s = 0; s <= 8; s++) core.Tick(t0.AddSeconds(s));
+                Expect(mem.Writes == 0 && statusOf(3) == 4, "working sound output: no sound is ever finished by the hotfix");
+                image[0x4800] = 1;
+                DateTime t1 = t0.AddSeconds(20);
+                for (int s = 0; s <= 4; s++) core.Tick(t1.AddSeconds(s));
+                Expect(statusOf(3) == 4 && mem.Writes == 0, "after a sound failure a sound is left alone for StuckSoundSeconds");
+                BitConverter.GetBytes(0u).CopyTo(pool, 11 * stride + LoadingGuard.VoiceStatusOffset);
+                for (int s = 5; s <= 7; s++) core.Tick(t1.AddSeconds(s));
+                Expect(statusOf(3) == LoadingGuard.VoiceFinished && core.SoundsFinished == 1, "a sound stuck after the sound failure is marked finished (the game's own end state)");
+                Expect(statusOf(7) == 4 && statusOf(9) == 0xC && statusOf(11) == 0 && statusOf(12) == 4 && mem.Writes == 1,
+                    "voices outside the active list, already finished, finished by the game or with a stale handle are never touched");
             }
 
             Console.WriteLine("Crash dump analysis (synthetic dump)");

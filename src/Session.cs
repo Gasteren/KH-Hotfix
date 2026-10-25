@@ -61,7 +61,8 @@ namespace KHHotfix
         DisplayGuard display;
         ApplicationContext ctx;
         DateTime idleSinceUtc = DateTime.MinValue;
-        bool busy, finishing, panicked;
+        bool busy, guarding, finishing, panicked;
+        NotifyIcon tray;
         int tick;
 
         public Session(string exe, string gameArgs, DateTime startLocal)
@@ -102,8 +103,9 @@ namespace KHHotfix
             Step("display recovery", delegate { DisplayGuard.RecoverStale(); });
             Step("save preflight", delegate { saves.Preflight(notices); });
             Step("save integrity check", delegate { saves.HealBeforeLaunch(notices); });
+            Step("audio output check", delegate { AudioDevices.Check(notices); });
             Step("pre-launch backup", delegate { saves.SnapshotAll("pre-launch"); });
-            Ui.Notice("KINGDOM HEARTS save check (before launch):", notices, MessageBoxIcon.Warning);
+            Ui.Notice("KINGDOM HEARTS check (before launch):", notices, MessageBoxIcon.Warning);
             Step("refresh-rate switch", delegate { display.Apply(); });
             string report = null;
             try
@@ -155,10 +157,18 @@ namespace KHHotfix
             timer.Interval = 1000;
             timer.Tick += delegate { SafeTick(); };
             timer.Start();
+            // The loading guard runs on its own, faster timer so a stuck load is released within a fraction of a second.
+            var guardTimer = new System.Windows.Forms.Timer();
+            guardTimer.Interval = 250;
+            guardTimer.Tick += delegate { SafeGuardTick(); };
+            guardTimer.Start();
             Application.Run(ctx);
+            guardTimer.Stop();
+            guardTimer.Dispose();
             timer.Stop();
             timer.Dispose();
             hotkey.Dispose();
+            if (tray != null) { tray.Visible = false; tray.Dispose(); tray = null; }
             foreach (TrackedProcess t in live.Values)
             {
                 if (t.Loading != null) t.Loading.Dispose();
@@ -175,13 +185,34 @@ namespace KHHotfix
             finally { busy = false; }
         }
 
+        void SafeGuardTick()
+        {
+            if (guarding || busy || finishing) return;
+            guarding = true;
+            try { GuardLoading(DateTime.UtcNow); }
+            catch (Exception ex) { Log.Error("Loading guard tick failed: " + ex); }
+            finally { guarding = false; }
+        }
+
+        // Shows a Windows notification right away (also over a borderless game window).
+        void Alert(string title, string text)
+        {
+            Log.Warn("Notification: " + title + " - " + text);
+            if (!Settings.ShowDialogs) return;
+            try
+            {
+                if (tray == null) tray = new NotifyIcon { Icon = System.Drawing.SystemIcons.Warning, Text = Program.Title, Visible = true };
+                tray.ShowBalloonTip(30000, title, text, ToolTipIcon.Warning);
+            }
+            catch (Exception ex) { Log.Warn("Notification failed: " + ex.Message); }
+        }
+
         void Tick()
         {
             tick++;
             DateTime now = DateTime.UtcNow;
             Discover();
             ApplyFixes();
-            GuardLoading(now);
             PollExits();
             Watch(now);
             if (tick % 2 == 0) saves.Poll();
@@ -239,14 +270,13 @@ namespace KHHotfix
             }
         }
 
-        // KH1 loading screens that never end (see LoadingGuard).
+        // KH1 loading screens that never end and lost sound output (see LoadingGuard).
         void GuardLoading(DateTime now)
         {
-            if (Settings.LoadingRescueSeconds <= 0) return;
-            foreach (TrackedProcess t in live.Values)
+            foreach (TrackedProcess t in live.Values.ToList())
             {
                 if (t.Handle == IntPtr.Zero || !LoadingGuard.Applies(t)) continue;
-                if (t.Loading == null) t.Loading = new LoadingGuard(t, postNotices.Add);
+                if (t.Loading == null) t.Loading = new LoadingGuard(t, postNotices.Add, Alert);
                 t.Loading.Tick(now);
             }
         }

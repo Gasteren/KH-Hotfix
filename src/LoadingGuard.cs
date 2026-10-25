@@ -9,19 +9,22 @@ using System.Text;
 namespace KHHotfix
 {
     // KINGDOM HEARTS FINAL MIX "infinite loading screen": the game keeps running, but the loading icon spins forever.
-    // When an area loads, each character sound bank is registered by a task that first waits until the four character
-    // voice slots are idle. A sound whose playback never reports "finished" keeps its slot busy forever, so that wait -
-    // and the whole area load queued behind it - never ends. While a load is pending, the guard looks for exactly this
-    // state (the same sound-bank request blocked on busy voice slots for LoadingRescueSeconds) and marks those slots
-    // idle. The load then completes at once; the sound itself is left alone. This repair was verified on a game stuck
-    // this way. Nothing is written in any other situation. All addresses come from code signatures in the executable,
-    // the code that uses them is verified too, and the running program must be the same build as the file.
+    // Root cause: the game's XAudio2 sound output fails for good when the audio device disappears and no other output is
+    // left (for example the only output is a Bluetooth headset that drops out). The game's sound library only records that
+    // error and never rebuilds its sound, so the game stays silent and no sound ever "finishes" again. When an area loads,
+    // each character sound bank is registered by a task that first waits until the four character voice slots are idle,
+    // so that wait - and the whole area load queued behind it - never ends.
+    // While a load is pending, the guard looks for exactly this state (the sound-bank request blocked on busy voice slots)
+    // and marks those slots idle; the load then completes at once and the sounds themselves are left alone. When the game's
+    // audio-failure flag is set, the slots can never become idle by themselves, so they are released right away; otherwise
+    // only after LoadingRescueSeconds. Nothing is written in any other situation. All addresses come from code signatures in
+    // the executable, the code that uses them is verified too, and the running program must be the same build as the file.
     internal sealed class LoadingGuard : IDisposable
     {
         internal const string GameName = "KINGDOM HEARTS FINAL MIX";
         internal const int SlotCount = 4, SlotSize = 0x28;
         internal const int UnknownHangSeconds = 120;
-        const uint Access = 0x0008 | 0x0010 | 0x0020 | 0x0400;   // VM_OPERATION | VM_READ | VM_WRITE | QUERY_INFORMATION
+        const uint ReadAccess = 0x0010 | 0x0400, WriteAccess = 0x0008 | 0x0020;   // VM_READ | QUERY_INFORMATION, VM_OPERATION | VM_WRITE
 
         // VoicesIdle check: lea rax,[slots] ; lea rcx,[slots+4*0x28] ; loop { cmp byte [rax],0 ; jne busy ; add rax,0x28 }
         internal const string SigVoiceBusy = "48 8D 05 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? 66 90 80 38 00 75 0C 48 83 C0 28 48 3B C1 7C F2 33 C0 C3 B8 01 00 00 00 C3";
@@ -33,17 +36,29 @@ namespace KHHotfix
         internal const string SigVoiceWait = "48 89 5C 24 18 57 41 56 41 57 48 83 EC 20 48 8B F9 E8 ?? ?? ?? ?? 85 C0";  // VoicesBusy: checks the slots first
         // Area load start: pending = (check == 0) ? 1 : pending ; ... ; store pending
         internal const string SigLoadPending = "E8 ?? ?? ?? ?? 8B 0D ?? ?? ?? ?? 85 C0 0F 44 CB 48 83 3D ?? ?? ?? ?? 00 48 8B 5C 24 20 89 0D ?? ?? ?? ??";
+        // Sound output init: clears the audio-failure flag (mov byte [flag],0), then loads xaudio2_9.dll (LOAD_LIBRARY_SEARCH_SYSTEM32).
+        internal const string SigAudioInit = "48 83 3D ?? ?? ?? ?? 00 8B 5E 58 8B 3D ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 00 75 ?? 33 D2 48 8D 0D ?? ?? ?? ?? 41 B8 00 08 00 00";
+        // IXAudio2EngineCallback::OnCriticalError of the sound library: mov byte [flag],1 ; ret
+        internal const string SigAudioFailedSetter = "C6 05 ?? ?? ?? ?? 01 C3";
+        // Voice handle lookup: voice = pool + (handle & 0x1FF) * stride, valid when [voice + link + 0x10] == &active list.
+        internal const string SigVoiceLookup = "40 53 48 83 EC 20 85 C9 78 ?? 48 8B 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? 8B D9 81 E3 FF 01 00 00 48 0F AF 1D ?? ?? ?? ?? 48 03 1D ?? ?? ?? ?? 48 39 54 18 10 75 ??";
+        internal const string SigVoiceIsPlaying = "F6 81 24 01 00 00 07 0F 95 C0 C3";   // test byte [voice+0x124],7 ; setne al ; ret
+        internal const string SigVoiceFinish = "C7 83 24 01 00 00 08 00 00 00";       // mov dword [voice+0x124],8 (sound finished)
+        internal const int VoicePoolSize = 512, VoiceHandleOffset = 0xC, VoiceStatusOffset = 0x124;
+        internal const uint VoiceFinished = 8;
 
         // ---- locating the game data ------------------------------------------------------------------------------
         internal sealed class Layout
         {
-            public uint VoiceSlots, BankScheduler, BankTask, LoadPending, TimeDateStamp, SizeOfImage;
+            public uint VoiceSlots, BankScheduler, BankTask, LoadPending, AudioFailed, TimeDateStamp, SizeOfImage;
+            public uint VoicePool, VoiceStride, VoiceLink, VoiceList;   // globals of the sound voice pool, 0 = not found
             public string Problem;
 
             public string Describe()
             {
-                return Problem ?? string.Format(CultureInfo.InvariantCulture, "ready (voice slots RVA 0x{0:X}, sound-bank tasks RVA 0x{1:X}, load flag RVA 0x{2:X}, build {3:X8})",
-                    VoiceSlots, BankScheduler, LoadPending, TimeDateStamp);
+                return Problem ?? string.Format(CultureInfo.InvariantCulture, "ready (voice slots RVA 0x{0:X}, sound-bank tasks RVA 0x{1:X}, load flag RVA 0x{2:X}, {3}, {4}, build {5:X8})",
+                    VoiceSlots, BankScheduler, LoadPending, AudioFailed != 0 ? "audio-failure flag RVA 0x" + AudioFailed.ToString("X") : "audio-failure flag not found",
+                    VoicePool != 0 ? "voice pool RVA 0x" + VoicePool.ToString("X") : "voice pool not found", TimeDateStamp);
             }
         }
 
@@ -121,6 +136,26 @@ namespace KHHotfix
             if (x.Target(hits[0] + 29, 2, 6) != l.LoadPending) return Fail(l, "load flag code differs");
 
             if (new[] { l.VoiceSlots, l.BankScheduler, l.LoadPending }.Any(rva => rva < 0x1000 || (long)rva + 0x100 > l.SizeOfImage)) return Fail(l, "game data outside the program image");
+
+            // Optional: without it the guard still works, it just cannot tell that the sound has failed.
+            hits = x.All(SigAudioInit);
+            if (hits.Count == 1)
+            {
+                uint flag = x.Target(hits[0] + 17, 2, 7);
+                int setters = x.All(SigAudioFailedSetter).Count(s => x.Target(s, 2, 7) == flag);
+                if (setters == 1 && flag >= 0x1000 && flag < l.SizeOfImage) l.AudioFailed = flag;
+            }
+
+            // Optional: the voice pool, used to finish sounds that can never end after the sound output failed.
+            hits = x.All(SigVoiceLookup);
+            if (l.AudioFailed != 0 && hits.Count == 1 && x.All(SigVoiceIsPlaying).Count == 1 && x.All(SigVoiceFinish).Count >= 1)
+            {
+                uint link = x.Target(hits[0] + 10, 3, 7), list = x.Target(hits[0] + 17, 3, 7), stride = x.Target(hits[0] + 32, 4, 8), pool = x.Target(hits[0] + 40, 3, 7);
+                if (new[] { link, list, stride, pool }.All(rva => rva >= 0x1000 && (long)rva + 8 <= l.SizeOfImage))
+                {
+                    l.VoiceLink = link; l.VoiceList = list; l.VoiceStride = stride; l.VoicePool = pool;
+                }
+            }
             return l;
         }
 
@@ -148,13 +183,18 @@ namespace KHHotfix
             readonly long imageBase;
             readonly Layout l;
             public int RescueSeconds = 10;
-            public int Rescues;
+            public int StuckSoundSeconds = 5;
+            public int Rescues, SoundsFinished, SlotsReleased;
             public Action<string> Rescued = delegate { };
             public Action<string> UnknownHang = delegate { };
+            public Action<string> AudioLost = delegate { };
             long reqTask;
             ulong reqData, reqArg;
-            DateTime reqSince = DateTime.MinValue, loadSince = DateTime.MinValue;
-            bool hangReported;
+            DateTime reqSince = DateTime.MinValue, loadSince = DateTime.MinValue, lastScan = DateTime.MinValue;
+            bool hangReported, audioReported;
+            readonly Dictionary<uint, DateTime> playingSince = new Dictionary<uint, DateTime>();
+            readonly string[] slotKey = new string[SlotCount];
+            readonly DateTime[] slotSince = new DateTime[SlotCount];
 
             public Core(IMemory mem, long imageBase, Layout layout)
             {
@@ -167,6 +207,14 @@ namespace KHHotfix
             {
                 byte[] v = mem.Read(imageBase + l.LoadPending, 4);
                 return v != null && BitConverter.ToInt32(v, 0) != 0;
+            }
+
+            // True once the game's XAudio2 output has failed (it never recovers by itself); false when unknown.
+            public bool AudioFailed()
+            {
+                if (l.AudioFailed == 0) return false;
+                byte[] v = mem.Read(imageBase + l.AudioFailed, 1);
+                return v != null && v[0] != 0;
             }
 
             // The first sound-bank task if it is still waiting for idle voice slots (step 0), else null.
@@ -202,6 +250,8 @@ namespace KHHotfix
             {
                 Request r = WaitingRequest();
                 var sb = new StringBuilder();
+                sb.AppendLine("Sound output       : " + (l.AudioFailed == 0 ? "unknown (audio-failure flag not found)"
+                    : AudioFailed() ? "FAILED - the audio device disappeared; no sound until the game is restarted" : "working"));
                 sb.AppendLine("Area load pending  : " + (LoadPending() ? "yes (loading screen)" : "no"));
                 sb.AppendLine("Sound-bank request : " + (r == null ? "none waiting for the voice slots"
                     : string.Format(CultureInfo.InvariantCulture, "waiting for idle voice slots (task 0x{0:X}, data 0x{1:X})", r.Task, r.Data)));
@@ -233,9 +283,74 @@ namespace KHHotfix
                 return what;
             }
 
-            // Called about once per second. Returns true when stuck voice slots were released.
+            long ReadPointer(long address)
+            {
+                byte[] v = mem.Read(address, 8);
+                return v == null ? 0 : BitConverter.ToInt64(v, 0);
+            }
+
+            // After the sound output failed, no sound ever finishes, so cutscenes and events that wait for one stop forever.
+            // Sounds that have been "playing" for StuckSoundSeconds are marked finished - the state the game itself sets when
+            // a sound ends - and the game then cleans them up and continues as usual. Only used while the output has failed.
+            void FinishStuckSounds(DateTime now)
+            {
+                if (l.VoicePool == 0 || (now - lastScan).TotalSeconds < 1) return;
+                lastScan = now;
+                long pool = ReadPointer(imageBase + l.VoicePool), stride = ReadPointer(imageBase + l.VoiceStride), link = ReadPointer(imageBase + l.VoiceLink);
+                if (pool == 0 || stride < VoiceStatusOffset + 4 || stride > 0x4000 || link < 0 || link + 0x18 > stride) return;
+                byte[] all = mem.Read(pool, (int)(VoicePoolSize * stride));
+                if (all == null) return;
+                long list = imageBase + l.VoiceList;
+                var seen = new HashSet<uint>();
+                for (int i = 0; i < VoicePoolSize; i++)
+                {
+                    int o = (int)(i * stride);
+                    uint handle = BitConverter.ToUInt32(all, o + VoiceHandleOffset);
+                    uint status = BitConverter.ToUInt32(all, o + VoiceStatusOffset);
+                    if ((handle & 0x1FF) != i || BitConverter.ToInt64(all, o + (int)link + 0x10) != list || (status & 7) == 0 || (status & VoiceFinished) != 0) continue;
+                    seen.Add(handle);
+                    DateTime first;
+                    if (!playingSince.TryGetValue(handle, out first)) { playingSince[handle] = now; continue; }
+                    if ((now - first).TotalSeconds < StuckSoundSeconds) continue;
+                    long at = pool + o + VoiceStatusOffset;
+                    byte[] current = mem.Read(at, 4);
+                    if (current != null && BitConverter.ToUInt32(current, 0) == status && mem.Write(at, BitConverter.GetBytes(VoiceFinished))) SoundsFinished++;
+                    playingSince.Remove(handle);
+                }
+                foreach (uint gone in playingSince.Keys.Where(k => !seen.Contains(k)).ToList()) playingSince.Remove(gone);
+            }
+
+            // Fallback for the character voice slots: a slot that stays "playing" after its sound should have been finished.
+            void ReleaseStuckSlots(DateTime now)
+            {
+                byte[] s = Slots();
+                if (s == null) return;
+                for (int i = 0; i < SlotCount; i++)
+                {
+                    int o = i * SlotSize;
+                    string key = s[o] == 4 ? BitConverter.ToString(s, o + 1, 15) : null;
+                    if (key == null || key != slotKey[i]) { slotKey[i] = key; slotSince[i] = now; continue; }
+                    if ((now - slotSince[i]).TotalSeconds < StuckSoundSeconds + 3) continue;
+                    if (mem.Write(imageBase + l.VoiceSlots + o, new byte[] { 0 })) SlotsReleased++;
+                    slotKey[i] = null;
+                }
+            }
+
+            // Called several times per second. Returns true when stuck voice slots were released.
             public bool Tick(DateTime now)
             {
+                bool audioFailed = AudioFailed();
+                if (audioFailed && !audioReported)
+                {
+                    audioReported = true;
+                    AudioLost("its sound output failed (the audio device disappeared while no other output was available) - "
+                        + "the game cannot recover its sound by itself, so it stays silent until it is restarted");
+                }
+                if (audioFailed && RescueSeconds > 0)
+                {
+                    FinishStuckSounds(now);
+                    ReleaseStuckSlots(now);
+                }
                 if (!LoadPending())
                 {
                     reqTask = 0;
@@ -254,7 +369,8 @@ namespace KHHotfix
                 }
                 bool released = false;
                 double waited = (now - reqSince).TotalSeconds;
-                if (r != null && RescueSeconds > 0 && waited >= RescueSeconds)
+                // With failed sound output the slots can never become idle by themselves: no reason to wait.
+                if (r != null && RescueSeconds > 0 && (audioFailed || waited >= RescueSeconds))
                 {
                     string what = ReleaseBusySlots();
                     if (what != null)
@@ -262,8 +378,9 @@ namespace KHHotfix
                         released = true;
                         Rescues++;
                         loadSince = now;
-                        Rescued(string.Format(CultureInfo.InvariantCulture,
-                            "loading screen stuck for {0:0} s waiting for {1} - marked idle, the load continues (known game bug)", waited, what));
+                        Rescued(audioFailed
+                            ? string.Format(CultureInfo.InvariantCulture, "loading screen waiting for {0} - released at once because the game's sound output has failed (known game bug)", what)
+                            : string.Format(CultureInfo.InvariantCulture, "loading screen stuck for {0:0} s waiting for {1} - marked idle, the load continues (known game bug)", waited, what));
                     }
                     reqSince = now;
                 }
@@ -280,15 +397,19 @@ namespace KHHotfix
         // ---- one guarded game process ----------------------------------------------------------------------------
         readonly TrackedProcess t;
         readonly Action<string> notice;
+        readonly Action<string, string> alert;
         IntPtr h;
         Core core;
-        bool disabled;
-        int attempts;
+        bool disabled, audioLost;
+        DateTime audioLostLocal;
+        int attempts, loggedFinished;
 
-        public LoadingGuard(TrackedProcess t, Action<string> notice)
+        // notice: shown after the session; alert(title, text): shown right away (a Windows notification).
+        public LoadingGuard(TrackedProcess t, Action<string> notice, Action<string, string> alert)
         {
             this.t = t;
             this.notice = notice;
+            this.alert = alert;
         }
 
         public static bool Applies(TrackedProcess t) { return t.IsGame && t.Name.Equals(GameName, StringComparison.OrdinalIgnoreCase); }
@@ -298,7 +419,16 @@ namespace KHHotfix
         public void Tick(DateTime now)
         {
             if (disabled || (core == null && !Attach())) return;
-            try { core.Tick(now); }
+            try
+            {
+                core.Tick(now);
+                int done = core.SoundsFinished + core.SlotsReleased;
+                if (done != loggedFinished && (loggedFinished == 0 || done - loggedFinished >= 50))
+                {
+                    Log.Info(t.Label + ": sounds stuck because of the failed sound output finished so far: " + core.SoundsFinished + " (voice slots released: " + core.SlotsReleased + ")");
+                    loggedFinished = done;
+                }
+            }
             catch (Exception ex) { disabled = true; Log.Warn(t.Label + " loading guard stopped: " + ex.Message); }
         }
 
@@ -307,14 +437,15 @@ namespace KHHotfix
             attempts++;
             Layout l = Locate(t.ImagePath);
             if (l.Problem != null) return Disable("loading guard not available: " + l.Problem);
-            if (h == IntPtr.Zero) h = Native.OpenProcess(Access, false, t.Pid);
+            int rescueSeconds = Settings.LoadingRescueSeconds;
+            if (h == IntPtr.Zero) h = Native.OpenProcess(ReadAccess | (rescueSeconds > 0 ? WriteAccess : 0), false, t.Pid);
             if (h == IntPtr.Zero) return Disable("loading guard cannot open the game (error " + Marshal.GetLastWin32Error() + ")");
             GameFixes.PeInfo live;
             long imageBase = GameFixes.ImageBase(h, out live);
-            if (imageBase == 0) return attempts < 30 ? false : Disable("loading guard: the game image is not readable");
+            if (imageBase == 0) return attempts < 120 ? false : Disable("loading guard: the game image is not readable");
             if (live.TimeDateStamp != l.TimeDateStamp || live.SizeOfImage != l.SizeOfImage)
                 return Disable("loading guard not available: the running program is a different build than " + t.ImagePath);
-            core = new Core(new ProcessMemory(h), imageBase, l) { RescueSeconds = Settings.LoadingRescueSeconds };
+            core = new Core(new ProcessMemory(h), imageBase, l) { RescueSeconds = rescueSeconds };
             core.Rescued = delegate(string what) { Log.Warn(t.Label + ": " + what); };
             core.UnknownHang = delegate(string what)
             {
@@ -324,7 +455,17 @@ namespace KHHotfix
                     notice(t.Name + ".exe stayed on a loading screen for over " + (UnknownHangSeconds / 60) + " minutes for a reason the hotfix does not know yet. "
                         + "A snapshot was saved; please report it with Reports\\<date>\\summary.txt (see the README).");
             };
-            Log.Info(t.Label + " loading guard active, stuck loads are released after " + core.RescueSeconds + " s: " + l.Describe());
+            core.AudioLost = delegate(string what)
+            {
+                audioLost = true;
+                audioLostLocal = DateTime.Now;
+                Log.Warn(t.Label + ": " + what);
+                if (alert != null)
+                    alert("KINGDOM HEARTS lost its sound", "Your audio output disconnected and the game cannot get its sound back by itself. "
+                        + "The hotfix keeps loading screens and cutscenes going. Save at the next save point, then restart the game.");
+            };
+            Log.Info(t.Label + " loading guard active (" + (rescueSeconds > 0 ? "stuck loads are released after " + rescueSeconds + " s; after a sound failure loads at once and sounds stuck for "
+                + core.StuckSoundSeconds + " s are finished" : "LoadingRescueSeconds=0: only reports, never changes the game") + "): " + l.Describe());
             return true;
         }
 
@@ -337,9 +478,16 @@ namespace KHHotfix
 
         public void Dispose()
         {
+            if (notice != null && audioLost)
+                notice(t.Name + ".exe lost its sound at " + audioLostLocal.ToString("HH:mm", CultureInfo.InvariantCulture) + ": its audio output disappeared while no "
+                    + "other output was enabled, and the game cannot recover its sound by itself (restarting it does). "
+                    + (core != null && core.SoundsFinished + core.SlotsReleased > 0 ? "Until then the hotfix finished " + (core.SoundsFinished + core.SlotsReleased)
+                        + " sounds that would have blocked cutscenes and events forever. " : "")
+                    + "To prevent this, keep a second audio output enabled in Windows Settings > System > Sound > All sound devices; "
+                    + "Windows then moves the game's sound there and back.");
             if (core != null && core.Rescues > 0 && notice != null)
-                notice(t.Name + ".exe got stuck on a loading screen " + core.Rescues + " time(s) - a known bug in the game. "
-                    + "The hotfix released it each time; nothing else was changed.");
+                notice(t.Name + ".exe got stuck on a loading screen " + core.Rescues + " time(s) - a known bug in the game"
+                    + (audioLost ? ", caused by its failed sound output" : "") + ". The hotfix released it each time; nothing else was changed.");
             core = null;
             disabled = true;
             if (h != IntPtr.Zero) { Native.CloseHandle(h); h = IntPtr.Zero; }
@@ -350,7 +498,7 @@ namespace KHHotfix
         {
             Layout l = Locate(exePath);
             if (l.Problem != null) { text = "Loading guard not available: " + l.Problem; return 7; }
-            IntPtr ph = Native.OpenProcess(Access, false, pid);
+            IntPtr ph = Native.OpenProcess(ReadAccess | (rescue ? WriteAccess : 0), false, pid);
             if (ph == IntPtr.Zero) { text = "Cannot open process " + pid + " (error " + Marshal.GetLastWin32Error() + ")"; return 1; }
             try
             {

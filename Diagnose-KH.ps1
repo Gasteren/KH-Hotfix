@@ -79,19 +79,15 @@ $nv = Invoke-Cli @('--nv-status')
 if ($nv.Code -eq 0) { Add $nv.Output; if ($nv.Output -notmatch 'APPLIED') { $advice.Add('NVIDIA 60 FPS cap not applied - run Install.cmd.') } }
 
 Section 'Audio'
-$root = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render'
-foreach ($d in Get-ChildItem $root -ErrorAction SilentlyContinue) {
-    if ((Get-ItemProperty $d.PSPath).DeviceState -ne 1) { continue }
-    $p = Get-ItemProperty (Join-Path $d.PSPath 'Properties') -ErrorAction SilentlyContinue
-    $fmt = $p.'{f19f064d-082c-4e27-bc73-6882a1bb8e4c},0'
-    $name = "$($p.'{a45c254e-df1c-4efd-8020-67d146a850e0},2') ($($p.'{b3f8fa53-0004-438e-9003-51a46e139bfc},6'))"
-    if ($fmt) {
-        $ch = [BitConverter]::ToUInt16($fmt, 10); $hz = [BitConverter]::ToUInt32($fmt, 12)
-        Add "  $name : $ch ch, $hz Hz"
-        if ($ch -gt 2) { $advice.Add("Audio device '$name' is set to $ch channels - the game crackles/cuts out; set it to Stereo (2 ch) in Sound settings.") }
-    }
+$au = Invoke-Cli @('--audio-devices')
+Add $au.Output
+foreach ($m in [regex]::Matches([string]$au.Output, '(?m)^\s+\[active\] (.+?) - (\d+) ch')) {
+    $name = $m.Groups[1].Value; $ch = [int]$m.Groups[2].Value
+    if ($ch -gt 2) { $advice.Add("Audio device '$name' is set to $ch channels - the game crackles/cuts out; set it to Stereo (2 ch) in Sound settings.") }
     if ($name -match 'Hands-Free') { $advice.Add('A Bluetooth headset is present: if its microphone is used (e.g. Discord), Windows switches it to Hands-Free mode, which can drop or crash game audio. Use a wired/USB output or keep the headset mic unused while playing.') }
 }
+if ($au.Code -eq 4) { $advice.Add('Only one audio output is enabled. If it disconnects even briefly (Bluetooth dropout), the game loses its sound until it is restarted and KH1 loading screens and cutscenes hang. Enable a second output in Windows Settings > System > Sound > All sound devices and keep your usual device as the default.') }
+if ($au.Code -eq 5) { $advice.Add('No audio output is enabled: the game will have no sound.') }
 
 Section 'Overlays and hooks currently running'
 $ov = Get-Process | Where-Object { $_.ProcessName -match '^(Discord|DiscordPTB|DiscordCanary|RTSS|MSIAfterburner|Overwolf|NVIDIA Overlay|obs64|Medal|ReShade|LosslessScaling|SteelSeriesGG|ArmouryCrate)' } | Select-Object -ExpandProperty ProcessName -Unique

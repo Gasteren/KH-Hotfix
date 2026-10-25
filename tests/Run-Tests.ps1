@@ -57,6 +57,7 @@ try {
     Expect ((Get-Content -Raw (Join-Path $work 'fake-cmdlines.txt')) -match 'ReMIX\.exe" -testarg "two words"') 'Steam %command% arguments passed through unchanged'
     Expect ((Get-Reports).Count -eq 0) 'no crash report for a clean session'
     Expect ($r.Log -match 'refresh switching disabled') 'display untouched when TargetRefreshHz=0'
+    Expect ($r.Log -match 'Audio outputs enabled: \d+') 'audio outputs checked before launch'
     Expect ($r.Log -match 'loading guard not available: .*different game version') 'loading guard backs off on an unknown KH1 build (writes nothing)'
 
     Write-Host 'Scenario: crash'
@@ -86,7 +87,7 @@ try {
     $r = Invoke-Session 'normal'
     Expect ($r.Log -match 'Auto-heal: restored Steam\\76561190000000000\\KHFM_WW\.png') 'damaged save restored before the game started'
     Expect (@(Get-ChildItem (Join-Path $hot 'Backups\_quarantine') -Recurse -Filter *.bin -ErrorAction SilentlyContinue).Count -ge 1) 'damaged copy quarantined'
-    Expect ($r.Log -match 'NOTICE: KINGDOM HEARTS save check \(before launch\)') 'user notified before launch'
+    Expect ($r.Log -match 'NOTICE: KINGDOM HEARTS check \(before launch\)') 'user notified before launch'
 
     Write-Host 'Scenario: game deletes a save mid-session'
     $r = Invoke-Session 'deletesave'
@@ -106,6 +107,7 @@ try {
         Write-Host 'Installed game (read-only checks)'
         $out = & (Join-Path $hot 'KHHotfixCli.exe') --fixes-scan $kh.Path | Out-String
         Expect ($out -match 'KINGDOM HEARTS FINAL MIX\.exe\s+Endless loading screen\s+ready') 'endless-loading guard matches the installed KH1'
+        Expect ($out -match 'Endless loading screen\s+ready \(.*audio-failure flag RVA 0x[0-9A-F]+') 'audio-failure flag found in the installed KH1'
         Expect ($out -match 'KINGDOM HEARTS FINAL MIX\.exe\s+Quit Game crash/freeze\s+ready') 'quit fix matches the installed KH1'
     }
     else { Write-Host '  SKIP  game not installed - real-executable checks skipped' }

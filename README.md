@@ -36,7 +36,8 @@ The Start menu folder **KH Hotfix** contains *Restore a KINGDOM HEARTS save*, *K
 | "Save data is corrupt" or lost progress | Quit the game, run *Restore a KINGDOM HEARTS save* and pick the newest version that is not marked *damaged*. |
 | "Failed to save game data" | Run *KH Hotfix diagnostics*. If Controlled Folder Access (ransomware protection) is on, run `Install.cmd` again and answer **Y** when it offers to allow the game. |
 | The game freezes | Press **Ctrl+Alt+K**: your saves are backed up and the game is closed. |
-| A loading screen never ends (KH1, the icon keeps spinning) | Wait: the hotfix releases it after 10 seconds and the game continues. If it is still loading after 2 minutes, the cause is a different one: a snapshot was saved, please report it like a crash. |
+| No sound any more (often after Bluetooth headphones dropped out) | The game cannot get its sound back once its audio output disappeared. Save, then restart the game. To prevent it, keep a second audio output enabled: see [Sound and endless loading screens](#sound-and-endless-loading-screens). |
+| A loading screen or the end of a cutscene never finishes (KH1, the game keeps running) | Wait: the hotfix releases it, a loading screen at once and a cutscene within a few seconds when the game has lost its sound (see the row above), otherwise a loading screen after 10 seconds. If it is still stuck after 2 minutes, the cause is a different one: a snapshot was saved, please report it like a crash. |
 | The game crashed | Your saves were backed up. `Reports\<date>\summary.txt` in the hotfix folder contains a crash analysis; please share it in a [crash report issue](https://github.com/Gasteren/KH-Hotfix/issues/new?template=crash-report.md) so the crash can be fixed in code. |
 | The installer says Windows blocked the program | Smart App Control or an antivirus blocks unsigned programs. The hotfix is compiled on your PC from the source code in `src\`; allow it in your antivirus or don't use the hotfix. |
 | The game closes immediately (code `0x00000035`) | The game is shared through Steam Families and another family member is playing it. |
@@ -50,7 +51,8 @@ Logs are in `Logs\` and crash reports in `Reports\` inside the hotfix folder.
 | Random crashes (pause menu, loading screens, combat) | The engine is unstable above 60 FPS, and on high-refresh monitors it runs far above 60 by default. |
 | Crashes on Alt+Tab | Exclusive-fullscreen swap-chain handling. |
 | Freeze or crash when choosing *Quit Game* | **Fixed in code by the hotfix.** After the main loop ends, the engine's application destructor frees a buffer that was already released (access violation in `_aligned_free`) or deadlocks. Found by analyzing a real crash dump. |
-| Endless loading screen in KH1 (the game keeps running, the loading icon spins forever) | **Released by the hotfix.** Before an area's character sound banks are loaded, the game waits until its four character voice slots are idle. A sound that never reports "finished" keeps its slot busy forever, so the area load never completes. Found by analyzing a game stuck this way. |
+| Endless loading screen in KH1 (the game keeps running, the loading icon spins forever), cutscenes that freeze at their end | **Released by the hotfix.** Both follow a failed sound output (next row): no sound ever "finishes" again, but before an area's character sound banks are loaded the game waits until its four character voice slots are idle, and cutscenes wait for their voices and sound streams to end. Found by analyzing a game stuck this way. |
+| No sound for the rest of the session | The games output sound through XAudio2 on the Windows default device. When the last enabled audio output disappears, even for a moment (Bluetooth dropout, headset switched off, monitor asleep), XAudio2 reports a critical error; the games only record it and never rebuild their sound. |
 | Lost or "corrupt" saves | Each game keeps all its slots in one file (`KHFM_WW.png`, `KHIIFM_WW.png`, ...) that is rewritten in place. A crash while saving leaves it cut off; the game then reports *"Save data is corrupt and will be deleted"* and deletes it. |
 | *"Failed to save game data"* | The game finds the Documents folder through legacy ANSI Windows APIs, so non-ASCII profile paths, OneDrive, Controlled Folder Access, read-only files or a full disk make every save fail. |
 | Stutter and uneven frame pacing | VRR (G-SYNC/FreeSync) and refresh rates above 60 Hz. |
@@ -74,11 +76,16 @@ Steam starts the game through `KHHotfix.exe` (launch option `"<hotfix folder>\KH
    the game's memory with a clean exit that keeps the game's exit code (KH1, Re:CoM, KH2, BBS and Theater). The game
    files on disk are never changed, and the fix is only applied when the code matches the known game version
    byte for byte, so a game update can't be broken by it. Verified on all five games.
-6. **Endless loading screens released (KH1)**: when an area load has been blocked for 10 seconds by a character voice
-   slot whose sound never finished, the hotfix marks that slot idle in the game's memory and the load continues at
-   once. It only acts in exactly that state, never during normal loading or gameplay, and only when the game's code
-   matches the known version. A load stuck for another reason is snapshotted after 2 minutes for analysis.
-7. **Freeze watchdog** (fallback): a game process that closed its window but never exits is closed after 20 seconds; a
+6. **Endless loading screens and frozen cutscenes released (KH1)**: when an area load is blocked by a character voice
+   slot whose sound never finishes, the hotfix marks that slot idle in the game's memory and the load continues at once.
+   After a sound failure (see below) this happens within a quarter of a second, and sounds that stay "playing" for 5
+   seconds are marked finished - the state the game itself sets when a sound ends - so cutscenes and events continue
+   too. Without a sound failure only a load blocked for 10 seconds is released. The hotfix only acts in exactly these
+   states, and only when the game's code matches the known version. A load stuck for another reason is snapshotted
+   after 2 minutes for analysis.
+7. **Sound failure alert**: when KH1's sound output fails, a Windows notification tells you to save and restart the
+   game, and before launch the hotfix warns once when only one audio output is enabled (see below).
+8. **Freeze watchdog** (fallback): a game process that closed its window but never exits is closed after 20 seconds; a
    window that stays *Not responding* for 2 minutes is closed too. Saves are backed up first.
 8. **Panic hotkey Ctrl+Alt+K**: backs up the saves and closes a frozen game, even in fullscreen.
 9. **Crash reports with analysis**: decoded exit codes, the game's own crash dump with an automatic call-stack analysis
@@ -99,6 +106,20 @@ location is known, and the hotfix now records exactly that. To play without the 
 
 To go back to the safe limits, set `TargetRefreshHz=60` again and run `Install.cmd`.
 
+## Sound and endless loading screens
+
+The KH games play their sound on the Windows default audio output. When that output disappears and another one is
+enabled, Windows moves the game's sound there (and back when the first one returns). But when the **only** enabled
+output disappears, even for a second - Bluetooth headphones dropping out or switching off, a USB headset being
+unplugged, a monitor with speakers going to sleep - the game's sound engine fails for good: no sound until the game
+is restarted, and in KH1 loading screens and cutscene endings wait forever for sounds that never finish.
+
+- **Prevent it:** keep a second audio output enabled. Windows Settings > System > Sound > *All sound devices*: pick
+  your monitor, speakers or any other output and choose *Allow*; keep your usual device selected as the default output.
+  The hotfix warns once before launch when only one output is enabled (`KHHotfixCli.exe --audio-devices` lists them).
+- **When it happens:** the hotfix shows a notification, keeps KH1's loading screens and cutscenes going, and tells you
+  in the session summary. Save at the next save point, then restart the game to get the sound back.
+
 ## Changes made to your PC
 
 All of these are reverted by the uninstaller:
@@ -118,7 +139,8 @@ Your real save files are never deleted; the hotfix only adds backups.
 `KHHotfix.ini` in the hotfix folder: backup retention, auto-repair, target refresh rate (`0` = never touch the
 display), watchdog timings, panic hotkey, dialogs, extra game arguments (for example `-reboot=true` to skip the
 logo videos), `FixQuitCrash` (the in-memory Quit Game fix, on by default) and `LoadingRescueSeconds` (how long a
-KH1 area load may be blocked by a stuck voice before it is released; `0` = off).
+KH1 area load may be blocked by a stuck voice before it is released, and whether stuck sounds are finished after a
+sound failure; `0` = only report, never change the game).
 
 ## For developers
 
@@ -131,15 +153,16 @@ KH1 area load may be blocked by a stuck voice before it is released; `0` = off).
   `tests\Test-Install.ps1` (fresh install from a downloaded ZIP, update, uninstall).
 - CLI: `--check`, `--backup`, `--restore-backup <gz> <save>`, `--display-info`, `--restore-display`, `--nv-status`,
   `--nv-apply [--fps N] [--no-vsync] [--no-gsync-off]`, `--nv-revert`, `--fixes-scan <game folder>`,
-  `--fixes-apply <pid> [--exit-code <marker>]`, `--loading-status <pid>`, `--loading-rescue <pid>`,
+  `--fixes-apply <pid> [--exit-code <marker>]`, `--loading-status <pid>`, `--loading-rescue <pid>`, `--audio-devices`,
   `--analyze-dump <file.dmp> [game folder]`, `--paths`, `--version`.
 - Code fixes live in `src\GameFixes.cs`: each one is a byte signature (must match exactly once in the executable) plus
   the replacement code. `--fixes-apply <pid> --exit-code 0x4B51` makes the quit fix exit with a marker code, which
   proves on a live game that the patched path runs.
-- The endless-loading guard lives in `src\LoadingGuard.cs`. It finds the voice slots, the sound-bank task list and the
-  area-load flag through the code that uses them (including the call chain from the sound-bank task to the voice
-  check). `--loading-status <pid>` shows what a running KH1 is waiting for; `--loading-rescue <pid>` releases a stuck
-  load immediately.
+- The endless-loading guard lives in `src\LoadingGuard.cs`. It finds the voice slots, the sound-bank task list, the
+  area-load flag, the sound library's audio-failure flag (set by its XAudio2 `OnCriticalError` callback, never read by
+  the game) and the voice pool through the code that uses them. `--loading-status <pid>` shows what a running KH1 is
+  waiting for; `--loading-rescue <pid>` releases a stuck load immediately. `src\AudioDevices.cs` lists the audio
+  outputs through the Windows Core Audio API.
 
 Sources: PCGamingWiki (Kingdom Hearts HD 1.5 + 2.5 ReMIX), Steam Community discussions for app 2552430,
 the KH-ReFined feature list, NVIDIA's public NVAPI headers.

@@ -278,7 +278,7 @@ namespace KHHotfix
         }
 
         // ---- checks before the game starts ------------------------------------------------------
-        public void Preflight(List<string> notices)
+        public void Preflight(Notices notices)
         {
             string ansi = Paths.DocumentsAnsi;
             if (ansi == null || ansi.IndexOf('?') >= 0 || !Directory.Exists(ansi))
@@ -306,7 +306,7 @@ namespace KHHotfix
                     if ((attr & FileAttributes.ReadOnly) == 0) continue;
                     File.SetAttributes(f, attr & ~FileAttributes.ReadOnly);
                     Log.Warn("Cleared read-only attribute: " + f);
-                    notices.Add("Removed the read-only flag from " + Paths.Rel(f) + " (it makes the game fail with \"Failed to save game data\").");
+                    notices.Detail("Removed the read-only flag from " + Paths.Rel(f) + " (it makes the game fail with \"Failed to save game data\").");
                 }
                 catch (Exception ex) { Log.Warn("Attribute check failed for " + f + ": " + ex.Message); }
             }
@@ -384,7 +384,7 @@ namespace KHHotfix
         //  - CRC damage once at least two good versions passed and none ever failed the CRC
         //  - a file shorter than the size that every good version had (the payload may sit after IEND)
         //  - an empty file
-        public void HealBeforeLaunch(List<string> notices)
+        public void HealBeforeLaunch(Notices notices)
         {
             foreach (string f in EnumerateSaveFiles())
             {

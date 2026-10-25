@@ -905,7 +905,7 @@ namespace KHHotfix
             Console.WriteLine("Backups, retention and auto-heal (temporary folder)");
             string saveRootBackup = Paths.SavesRoot, backupsBackup = Paths.Backups, quarantineBackup = Paths.Quarantine;
             int keepBackup = Settings.BackupKeep, daysBackup = Settings.BackupDailyDays;
-            bool healBackup = Settings.AutoHeal;
+            bool healBackup = Settings.AutoHeal, detailedBackup = Settings.DetailedMessages;
             string tmp = Path.Combine(Path.GetTempPath(), "KHHotfix-selftest-" + Guid.NewGuid().ToString("N"));
             try
             {
@@ -913,6 +913,7 @@ namespace KHHotfix
                 Paths.Backups = Path.Combine(tmp, "backups");
                 Paths.Quarantine = Path.Combine(Paths.Backups, "_quarantine");
                 Settings.AutoHeal = true;
+                Settings.DetailedMessages = false;
                 string save = Path.Combine(Paths.SavesRoot, @"Steam\76561190000000000\KHFM_WW.png");
                 Directory.CreateDirectory(Path.GetDirectoryName(save));
                 byte[] good = MakePng(3000);
@@ -925,10 +926,10 @@ namespace KHHotfix
                 Expect(SaveGuard.ReadGz(hist[0].FullPath).SequenceEqual(good), "gzip round-trip is byte-identical");
 
                 File.WriteAllBytes(save, good.Take(40).ToArray());   // crash while saving: cut inside the PNG chunks
-                var notices = new List<string>();
+                var notices = new Notices();
                 sg.HealBeforeLaunch(notices);
                 Expect(File.ReadAllBytes(save).SequenceEqual(good), "save cut inside PNG chunks is restored from the last good backup");
-                Expect(notices.Count == 1 && notices[0].Contains("restored"), "user is told about the restore");
+                Expect(notices.Count == 1 && notices[0].Contains("restored") && notices.Shown.Count == 1, "user is told about the restore");
                 Expect(Directory.Exists(Paths.Quarantine) && Directory.GetFiles(Paths.Quarantine, "*.bin", SearchOption.AllDirectories).Length == 1, "damaged copy quarantined");
 
                 byte[] cutTail = good.Take(good.Length - 1000).ToArray();   // cut inside data stored after IEND
@@ -957,7 +958,8 @@ namespace KHHotfix
                 File.SetAttributes(save, FileAttributes.ReadOnly);
                 notices.Clear();
                 sg.Preflight(notices);
-                Expect((File.GetAttributes(save) & FileAttributes.ReadOnly) == 0 && notices.Any(n => n.Contains("read-only")), "read-only save flag removed");
+                Expect((File.GetAttributes(save) & FileAttributes.ReadOnly) == 0 && notices.Any(n => n.Contains("read-only")) && !notices.Shown.Any(n => n.Contains("read-only")),
+                    "read-only save flag removed (logged, the player is not bothered)");
 
                 Settings.BackupKeep = 5;
                 Settings.BackupDailyDays = 0;
@@ -976,7 +978,39 @@ namespace KHHotfix
                 Settings.BackupKeep = keepBackup;
                 Settings.BackupDailyDays = daysBackup;
                 Settings.AutoHeal = healBackup;
+                Settings.DetailedMessages = detailedBackup;
                 try { foreach (string f in Directory.GetFiles(tmp, "*", SearchOption.AllDirectories)) File.SetAttributes(f, FileAttributes.Normal); Directory.Delete(tmp, true); } catch { }
+            }
+
+            Console.WriteLine("Messages for the player");
+            bool shownBackup = Settings.DetailedMessages;
+            string logHookBackup = Settings.DiscordLogWebhook;
+            try
+            {
+                Settings.DetailedMessages = false;
+                Settings.DiscordLogWebhook = "";
+                var n = new Notices();
+                n.Add("save restored");
+                n.Detail("loading screen released");
+                n.AboutReport("crash report written");
+                n.Insert(0, "game crashed", Notices.AutoReported);
+                Expect(n.Count == 4 && n.SequenceEqual(new[] { "game crashed", "save restored", "loading screen released", "crash report written" }),
+                    "every message is kept in order (for the log and the Discord reports)");
+                Expect(n.Shown.SequenceEqual(new[] { "game crashed", "save restored", "crash report written" }) && n.Hidden.SequenceEqual(new[] { "loading screen released" }),
+                    "the player sees what needs them, not what the hotfix handled; crash notes are shown when nobody receives the report");
+                Settings.DiscordLogWebhook = "https://discord.com/api/webhooks/123456789012345678/" + new string('x', 68);
+                var m = new Notices();
+                m.Add("save restored");
+                m.Detail("loading screen released");
+                m.AboutReport("crash report written");
+                Expect(m.Shown.SequenceEqual(new[] { "save restored" }) && m.Count == 3, "with Discord crash reporting, crash and freeze notes are only reported (sent automatically)");
+                Settings.DetailedMessages = true;
+                Expect(m.Shown.Count == 3 && m.Hidden.Count == 0, "DetailedMessages=1 shows everything");
+            }
+            finally
+            {
+                Settings.DetailedMessages = shownBackup;
+                Settings.DiscordLogWebhook = logHookBackup;
             }
 
             DiscordTests();

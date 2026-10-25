@@ -15,14 +15,14 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("KH 1.5+2.5 Hotfix")]
 [assembly: System.Reflection.AssemblyProduct("KHHotfix")]
-[assembly: System.Reflection.AssemblyVersion("1.3.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.3.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.3.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.3.1.0")]
 
 namespace KHHotfix
 {
     internal static class Program
     {
-        public const string Version = "1.3.0";
+        public const string Version = "1.3.1";
         public const string Title = "KH 1.5+2.5 Hotfix";
 #if CLI
         public static readonly bool Cli = true;
@@ -135,6 +135,7 @@ namespace KHHotfix
         public static int ExitGraceSeconds = 8;
         public static string PanicHotkey = "Ctrl+Alt+K";
         public static bool ShowDialogs = true;
+        public static bool DetailedMessages = false;
         public static string SavesRoot = "";
         public static string ExtraGameArgs = "";
         public static bool FixQuitCrash = true;
@@ -176,6 +177,7 @@ namespace KHHotfix
                     case "exitgraceseconds": ExitGraceSeconds = Int(val, ExitGraceSeconds, 2, 120); break;
                     case "panichotkey": PanicHotkey = val; break;
                     case "showdialogs": ShowDialogs = Bool(val, ShowDialogs); break;
+                    case "detailedmessages": DetailedMessages = Bool(val, DetailedMessages); break;
                     case "savesroot": SavesRoot = val; break;
                     case "extragameargs": ExtraGameArgs = val; break;
                     case "fixquitcrash": FixQuitCrash = Bool(val, FixQuitCrash); break;
@@ -250,13 +252,56 @@ namespace KHHotfix
         }
     }
 
+    // Messages for the player. Important ones (something to do, or something that happened to the saves) are shown;
+    // details about what the hotfix handled by itself are only logged and sent with the Discord reports, unless
+    // DetailedMessages=1. Enumerating returns all of them, in order.
+    internal sealed class Notices : IEnumerable<string>
+    {
+        sealed class Entry
+        {
+            public string Text;
+            public bool Detail;
+        }
+
+        readonly List<Entry> items = new List<Entry>();
+
+        public int Count { get { return items.Count; } }
+        public string this[int index] { get { return items[index].Text; } }
+
+        public void Add(string text) { Insert(items.Count, text, false); }
+        public void Detail(string text) { Insert(items.Count, text, true); }
+
+        // About a crash or freeze report: a detail when Discord reporting sends the report by itself, otherwise shown
+        // because the player has to pass the report on.
+        public void AboutReport(string text) { Insert(items.Count, text, AutoReported); }
+
+        public void Insert(int index, string text, bool detail) { items.Insert(index, new Entry { Text = text, Detail = detail }); }
+
+        public void AddRange(IEnumerable<string> texts) { foreach (string t in texts) Add(t); }
+
+        public void Clear() { items.Clear(); }
+
+        public static bool AutoReported { get { return Discord.IsWebhook(Settings.DiscordLogWebhook); } }
+
+        public List<string> Shown { get { return items.Where(i => Settings.DetailedMessages || !i.Detail).Select(i => i.Text).ToList(); } }
+
+        public List<string> Hidden { get { return items.Where(i => !Settings.DetailedMessages && i.Detail).Select(i => i.Text).ToList(); } }
+
+        public IEnumerator<string> GetEnumerator() { return items.Select(i => i.Text).GetEnumerator(); }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() { return GetEnumerator(); }
+    }
+
     internal static class Ui
     {
-        public static void Notice(string heading, IList<string> items, MessageBoxIcon icon)
+        public static void Notice(string heading, Notices notices, MessageBoxIcon icon)
         {
-            if (items == null || items.Count == 0) return;
+            if (notices == null || notices.Count == 0) return;
+            List<string> hidden = notices.Hidden, shown = notices.Shown;
+            if (hidden.Count > 0) Log.Info("Not shown to the player (DetailedMessages=0): " + string.Join(" | ", hidden));
+            if (shown.Count == 0) return;
             var sb = new StringBuilder(heading);
-            foreach (string i in items) { sb.AppendLine(); sb.AppendLine(); sb.Append("- " + i); }
+            foreach (string i in shown) { sb.AppendLine(); sb.AppendLine(); sb.Append("- " + i); }
             Log.Info("NOTICE: " + sb.ToString().Replace("\r\n", " | ").Replace("\n", " | "));
             if (Program.Cli || !Settings.ShowDialogs) return;
             try

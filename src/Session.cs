@@ -53,7 +53,7 @@ namespace KHHotfix
         readonly Dictionary<int, TrackedProcess> live = new Dictionary<int, TrackedProcess>();
         readonly List<TrackedProcess> done = new List<TrackedProcess>();
         readonly HashSet<int> unopenable = new HashSet<int>();
-        readonly List<string> postNotices = new List<string>();
+        readonly Notices postNotices = new Notices();
         public bool GameStarted;
         Process root;
         TrackedProcess rootTracked;
@@ -99,7 +99,7 @@ namespace KHHotfix
 
         int RunGuarded()
         {
-            var notices = new List<string>();
+            var notices = new Notices();
             saves = new SaveGuard();
             display = new DisplayGuard();
             Log.Info("Saves folder: " + Paths.SavesRoot + " | Documents (ANSI view): " + Paths.DocumentsAnsi);
@@ -296,7 +296,7 @@ namespace KHHotfix
             foreach (TrackedProcess t in live.Values.ToList())
             {
                 if (t.Handle == IntPtr.Zero || !LoadingGuard.Applies(t)) continue;
-                if (t.Loading == null) t.Loading = new LoadingGuard(t, postNotices.Add, Alert);
+                if (t.Loading == null) t.Loading = new LoadingGuard(t, postNotices, Alert);
                 t.Loading.Tick(now);
             }
         }
@@ -378,7 +378,7 @@ namespace KHHotfix
             t.KilledByHotfix = true;
             t.KillReason = reason;
             if (!Native.TerminateProcess(t.Handle, CrashCodes.KilledByHotfix)) Log.Error("TerminateProcess failed, error " + Marshal.GetLastWin32Error());
-            postNotices.Add(t.Name + ".exe " + reason + ". The hotfix closed it for you after backing up your saves.");
+            postNotices.Detail(t.Name + ".exe " + reason + ". The hotfix closed it for you after backing up your saves.");
         }
 
         void OnPanic()
@@ -394,7 +394,7 @@ namespace KHHotfix
                 t.KillReason = "panic hotkey";
                 if (!Native.TerminateProcess(t.Handle, CrashCodes.KilledByHotfix)) Log.Error("TerminateProcess failed for " + t.Label);
             }
-            postNotices.Add("You pressed the panic hotkey (" + Settings.PanicHotkey + "). The game was closed after your saves were backed up.");
+            postNotices.Detail("You pressed the panic hotkey (" + Settings.PanicHotkey + "). The game was closed after your saves were backed up.");
         }
 
         // Ctrl+Alt+B: capture the moment right away (screenshot, game state, snapshot), then open the report window.
@@ -441,7 +441,7 @@ namespace KHHotfix
             string headline = report == null ? FirstSentence(postNotices[0]) : reportHeadline;
             string line = LogReport.Send(headline, kind, report, new List<string>(postNotices), Log.FilePath,
                 games.Count > 0 ? BugReport.GameTitle(games[0].Name) : null, gameDir);
-            if (line != null) postNotices.Add(line);
+            if (line != null) postNotices.Detail(line);
         }
 
         static string FirstSentence(string s)
@@ -559,7 +559,8 @@ namespace KHHotfix
             if (crashed.Count > 0)
                 postNotices.Insert(0, string.Join(", ", crashed.Select(c => c.Name + ".exe (0x" + c.ExitCode.ToString("X8") + CrashCodes.Describe(c.ExitCode) + ")"))
                     + " crashed. Your saves were backed up; a crash report was written to " + dir + ". Use Restore.cmd if the game now reports a save as corrupt."
-                    + (known.Count > 0 ? " Recognized: " + string.Join("; ", known.Distinct()) + "." : " Sharing Reports\\" + Path.GetFileName(dir) + "\\summary.txt helps to fix this crash."));
+                    + (known.Count > 0 ? " Recognized: " + string.Join("; ", known.Distinct()) + "." : " Sharing Reports\\" + Path.GetFileName(dir) + "\\summary.txt helps to fix this crash."),
+                    Notices.AutoReported);
             Log.Info("Crash/hang report written to " + dir);
             return dir;
         }

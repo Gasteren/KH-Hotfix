@@ -126,9 +126,11 @@ Write-Ok 'KHHotfix.exe and KHHotfixCli.exe built; self-test passed'
 $r = Invoke-Cli @('--discord-test')
 if ($r.Code -ne 3) {
     Write-Step 'Discord reporting'
-    $r.Output -split "`r?`n" | Where-Object { $_ } | ForEach-Object { Write-Info $_ }
-    if ($r.Code -eq 0) { Write-Ok 'Bug reports and crash reports will be posted to Discord' }
-    else { Write-Warn2 'Discord reporting does not work yet (see above). The game and the rest of the hotfix are not affected.' }
+    if ($r.Code -eq 0) { Write-Ok 'Bug reports and crash reports will be sent to Discord' }
+    else {
+        $r.Output -split "`r?`n" | Where-Object { $_ } | ForEach-Object { Write-Info $_ }
+        Write-Warn2 'Discord reporting does not work yet (see above). The game and the rest of the hotfix are not affected.'
+    }
 }
 
 $state = Get-HotfixState

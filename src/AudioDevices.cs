@@ -174,14 +174,13 @@ namespace KHHotfix
             List<Endpoint> active = all.Where(e => e.State == Active).ToList();
             if (active.Count != 1) return null;
             return "Only one audio output is enabled: " + (active[0].Name ?? "unknown device") + ". If it disconnects even for a moment "
-                + "(Bluetooth dropout, headset turned off, monitor going to sleep), KINGDOM HEARTS loses its sound until you restart it, "
-                + "and KH1 loading screens wait for sounds that never finish (the hotfix releases them). To prevent this, enable a second "
-                + "output in Windows Settings > System > Sound > All sound devices (for example your monitor or speakers) and keep your "
-                + "usual device as the default: Windows then moves the game's sound to the other output and back.";
+                + "(Bluetooth dropout, headset turned off, monitor going to sleep), KINGDOM HEARTS loses its sound until you restart it. "
+                + "To prevent this, enable a second output in Windows Settings > System > Sound > All sound devices (for example your "
+                + "monitor or speakers) and keep your usual device as the default.";
         }
 
         // Pre-launch check: logs the outputs and warns once per device when only one output is enabled.
-        internal static void Check(List<string> notices)
+        internal static void Check(Notices notices)
         {
             string error;
             List<Endpoint> all = Render(out error);

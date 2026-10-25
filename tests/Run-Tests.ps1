@@ -96,6 +96,7 @@ try {
     Expect ($post -and $post.Hook -eq '1' -and $post.Json.thread_name -match '^\[KH1\] KINGDOM HEARTS FINAL MIX crashed: 0xC0000005 \(access violation\) - ') 'crash posted to the log webhook automatically, as a titled forum post'
     Expect ($post -and $post.Files -contains 'summary.txt' -and $post.Files -contains 'session.log' -and $post.Files -contains 'system.txt' -and $post.Json.embeds[0].title -eq 'Crash report' -and $post.Raw -match '"allowed_mentions":\{"parse":\[\]\}') 'crash post: summary, session log, system info, crash embed, no pings'
     Expect ($rep -and (Test-Path (Join-Path $rep.FullName 'discord-sent.txt')) -and $r.Log -match 'Report sent to Discord \(webhook 1\)') 'crash report marked as sent'
+    Expect ($r.Log -notmatch 'NOTICE: KINGDOM HEARTS session summary' -and $r.Log -match 'Not shown to the player \(DetailedMessages=0\): .*crashed\. Your saves were backed up') 'crash reported automatically: no session summary dialog for the player'
 
     Write-Host 'Scenario: shutdown hang (window closed, process never exits)'
     $posts = (Get-Posts).Count
@@ -107,6 +108,7 @@ try {
     Expect ($rep -and @(Get-ChildItem $rep.FullName -Filter '*frozen*.dmp').Count -eq 1 -and (Get-Content -Raw (Join-Path $rep.FullName 'summary.txt')) -match 'Freeze analysis') 'freeze snapshot taken before closing and analyzed in the report'
     $post = Get-NewPost $posts
     Expect ($post -and $post.Json.thread_name -match '^\[KH1\] KINGDOM HEARTS FINAL MIX ' -and $post.Json.embeds[0].title -eq 'Freeze report' -and @($post.Files -match 'frozen.*\.dmp\.gz$').Count -eq 1) 'freeze posted with the packed snapshot'
+    Expect ($r.Log -notmatch 'NOTICE: KINGDOM HEARTS session summary' -and $post -and $post.Json.content -match 'The hotfix closed it for you') 'freeze handled by the hotfix: only in the report, not shown to the player'
 
     Write-Host 'Scenario: frozen window'
     $r = Invoke-Session 'hungwindow'
@@ -129,6 +131,7 @@ try {
     Expect ($r.Log -match 'The game deleted Steam\\76561190000000000\\KHFM_WW\.png') 'user told how to get it back'
     $post = Get-NewPost $posts
     Expect ($post -and $post.Json.thread_name -match '^\[KH1\] The game deleted Steam\\<steamid>\\KHFM_WW\.png' -and $post.Json.embeds[0].title -eq 'Session report' -and $post.Raw -notmatch '76561190000000000') 'session with a deleted save reported, Steam id removed'
+    Expect ($r.Log -match 'NOTICE: KINGDOM HEARTS session summary: .*The game deleted Steam') 'a deleted save is shown to the player'
 
     Write-Host 'CLI'
     $out = & (Join-Path $hot 'KHHotfixCli.exe') --check | Out-String

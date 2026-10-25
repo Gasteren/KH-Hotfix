@@ -137,6 +137,11 @@ Crashes, freezes and sessions in which the hotfix had to step in (lost sound, re
 are posted automatically after the session, with the logs and the crash analysis. This also only happens when Discord
 reporting is set up.
 
+Players only get messages that need them: a save that was damaged, restored or deleted, saving that is blocked, lost
+sound. What the hotfix handled by itself (released loading screens, closed frozen games, crash reports sent to Discord)
+is only logged and sent with these reports; `DetailedMessages=1` in `KHHotfix.local.ini` shows it too. Without Discord
+reporting, crash notes are shown, because then the player has to share the report.
+
 **What is sent:** your description, the screenshot and the session log. It also includes system information: Windows,
 CPU, GPU and driver, RAM, display, audio outputs, game build and hotfix settings. If ticked, the technical snapshot is
 sent too. Your Windows user name, PC name and Steam ID are removed from the text, and reports from the same PC carry an
@@ -179,8 +184,9 @@ Your real save files are never deleted; the hotfix only adds backups.
 ## Settings
 
 `KHHotfix.ini` in the hotfix folder: backup retention, auto-repair, target refresh rate (`0` = never touch the
-display), watchdog timings, panic hotkey, dialogs, extra game arguments (for example `-reboot=true` to skip the
-logo videos), `FixQuitCrash` (the in-memory Quit Game fix, on by default) and `LoadingRescueSeconds` (how long a
+display), watchdog timings, panic hotkey, dialogs (`ShowDialogs`; `DetailedMessages=1` also shows what the hotfix
+handled by itself), extra game arguments (for example `-reboot=true` to skip the logo videos), `FixQuitCrash` (the
+in-memory Quit Game fix, on by default) and `LoadingRescueSeconds` (how long a
 KH1 area load may be blocked by a stuck voice before it is released, and whether stuck sounds are finished after a
 sound failure; `0` = only report, never change the game). Also `BugReportHotkey` (default `Ctrl+Alt+B`, empty = off)
 and the Discord reporting settings `DiscordBugReportWebhook`, `DiscordLogWebhook` and `DiscordBugReportTags`, which

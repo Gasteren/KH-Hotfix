@@ -396,7 +396,7 @@ namespace KHHotfix
 
         // ---- one guarded game process ----------------------------------------------------------------------------
         readonly TrackedProcess t;
-        readonly Action<string> notice;
+        readonly Notices notices;
         readonly Action<string, string> alert;
         IntPtr h;
         Core core;
@@ -404,11 +404,11 @@ namespace KHHotfix
         DateTime audioLostLocal;
         int attempts, loggedFinished;
 
-        // notice: shown after the session; alert(title, text): shown right away (a Windows notification).
-        public LoadingGuard(TrackedProcess t, Action<string> notice, Action<string, string> alert)
+        // notices: shown after the session (details only in the log and reports); alert(title, text): shown right away (a Windows notification).
+        public LoadingGuard(TrackedProcess t, Notices notices, Action<string, string> alert)
         {
             this.t = t;
-            this.notice = notice;
+            this.notices = notices;
             this.alert = alert;
         }
 
@@ -451,8 +451,8 @@ namespace KHHotfix
             {
                 Log.Warn(t.Label + ": " + what + " - cause unknown, writing a snapshot for analysis");
                 HangDump.Write(t, "loading screen stuck");
-                if (notice != null)
-                    notice(t.Name + ".exe stayed on a loading screen for over " + (UnknownHangSeconds / 60) + " minutes for a reason the hotfix does not know yet. "
+                if (notices != null)
+                    notices.AboutReport(t.Name + ".exe stayed on a loading screen for over " + (UnknownHangSeconds / 60) + " minutes for a reason the hotfix does not know yet. "
                         + "A snapshot was saved; please report it with Reports\\<date>\\summary.txt (see the README).");
             };
             core.AudioLost = delegate(string what)
@@ -478,18 +478,21 @@ namespace KHHotfix
 
         public void Dispose()
         {
-            if (notice != null && audioLost)
-                notice(t.Name + ".exe lost its sound at " + audioLostLocal.ToString("HH:mm", CultureInfo.InvariantCulture) + ": its audio output disappeared while no "
-                    + "other output was enabled, and the game cannot recover its sound by itself (restarting it does). "
-                    + (core != null && core.SoundsFinished + core.SlotsReleased > 0 ? "Until then the hotfix finished " + (core.SoundsFinished + core.SlotsReleased)
-                        + " sounds that would have blocked cutscenes and events forever. " : "")
-                    + "To prevent this, keep a second audio output enabled in Windows Settings > System > Sound > All sound devices; "
-                    + "Windows then moves the game's sound there and back.");
-            if (core != null && core.Rescues > 0 && notice != null)
-                notice(t.Name + ".exe got stuck on a loading screen " + core.Rescues + " time(s) - a known bug in the game"
+            if (notices != null && audioLost)
+            {
+                notices.Add("KINGDOM HEARTS lost its sound at " + audioLostLocal.ToString("HH:mm", CultureInfo.InvariantCulture) + " because your audio output "
+                    + "disconnected (for example Bluetooth headphones dropping out). To prevent this, enable a second audio output in Windows Settings > "
+                    + "System > Sound > All sound devices and keep your usual device as the default.");
+                if (core != null && core.SoundsFinished + core.SlotsReleased > 0)
+                    notices.Detail(t.Name + ".exe: after the sound failure the hotfix finished " + (core.SoundsFinished + core.SlotsReleased)
+                        + " sounds that would have blocked cutscenes and events forever.");
+            }
+            if (core != null && core.Rescues > 0 && notices != null)
+                notices.Detail(t.Name + ".exe got stuck on a loading screen " + core.Rescues + " time(s) - a known bug in the game"
                     + (audioLost ? ", caused by its failed sound output" : "") + ". The hotfix released it each time; nothing else was changed.");
             core = null;
             disabled = true;
+            audioLost = false;
             if (h != IntPtr.Zero) { Native.CloseHandle(h); h = IntPtr.Zero; }
         }
 

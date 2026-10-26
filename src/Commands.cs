@@ -70,7 +70,7 @@ namespace KHHotfix
                 {
                     if (s.Problem == null) usable++; else broken++;
                     Console.WriteLine(string.Format(CultureInfo.InvariantCulture, "  {0,-45} {1,-24} {2}", Path.GetFileName(exe), s.Fix.Description,
-                        s.Problem ?? ("ready (RVA 0x" + (s.Rva + s.Fix.Offset).ToString("X") + ", build " + pe.TimeDateStamp.ToString("X8") + ")")));
+                        s.Problem ?? ("ready (RVA 0x" + (s.Rva + s.Fix.Offset).ToString("X") + ", exit code hand-over at RVA 0x" + s.WriterRva.ToString("X") + ", build " + pe.TimeDateStamp.ToString("X8") + ")")));
                 }
                 if (Path.GetFileNameWithoutExtension(exe).Equals(LoadingGuard.GameName, StringComparison.OrdinalIgnoreCase))
                 {
@@ -627,6 +627,104 @@ namespace KHHotfix
             }
         }
 
+        // A tiny 64-bit PE shaped like a KH game for the quit fix: KH1's quit site at RVA 0x1000, the "Mare_mem" writer at
+        // 0x1100 (its lea loading `sharedName`), and KERNEL32.dll imports CloseHandle, one by ordinal, then TerminateProcess
+        // (import slot 0x2410) or ExitProcess.
+        static byte[] MakeQuitImage(bool withWriter, string sharedName, bool withTerminate)
+        {
+            const int Pe = 0x80, Opt = Pe + 24, OptSize = 0xF0, Sec = Opt + OptSize;
+            const int TextRaw = 0x400, TextRva = 0x1000, RdataRaw = 0x1400, RdataRva = 0x2000, Size = 0x1000;
+            var f = new byte[RdataRaw + Size];
+            for (int i = TextRaw; i < RdataRaw; i++) f[i] = 0xCC;
+            f[0] = (byte)'M'; f[1] = (byte)'Z';
+            BitConverter.GetBytes(Pe).CopyTo(f, 0x3C);
+            BitConverter.GetBytes(0x00004550u).CopyTo(f, Pe);
+            BitConverter.GetBytes((ushort)2).CopyTo(f, Pe + 6);
+            BitConverter.GetBytes(0x669E37CEu).CopyTo(f, Pe + 8);
+            BitConverter.GetBytes((ushort)OptSize).CopyTo(f, Pe + 20);
+            BitConverter.GetBytes((ushort)0x20B).CopyTo(f, Opt);
+            BitConverter.GetBytes(0x3000u).CopyTo(f, Opt + 56);
+            BitConverter.GetBytes(16u).CopyTo(f, Opt + 108);
+            BitConverter.GetBytes(0x2100).CopyTo(f, Opt + 120);   // import directory
+            string[] names = { ".text", ".rdata" };
+            int[] rvas = { TextRva, RdataRva }, raws = { TextRaw, RdataRaw };
+            for (int s = 0; s < 2; s++)
+            {
+                int h = Sec + s * 40;
+                System.Text.Encoding.ASCII.GetBytes(names[s]).CopyTo(f, h);
+                BitConverter.GetBytes((uint)Size).CopyTo(f, h + 8);
+                BitConverter.GetBytes((uint)rvas[s]).CopyTo(f, h + 12);
+                BitConverter.GetBytes((uint)Size).CopyTo(f, h + 16);
+                BitConverter.GetBytes((uint)raws[s]).CopyTo(f, h + 20);
+            }
+            Action<int, byte?[]> code = delegate(int rva, byte?[] pattern) { for (int i = 0; i < pattern.Length; i++) f[rva - TextRva + TextRaw + i] = pattern[i] ?? 0; };
+            Func<int, int> data = delegate(int rva) { return rva - RdataRva + RdataRaw; };
+            code(0x1000, GameFixes.Catalog[0].Pattern);
+            if (withWriter)
+            {
+                int o, n;
+                code(0x1100, GameFixes.ParsePattern(GameFixes.MareWriterSignature, out o, out n));
+                BitConverter.GetBytes(0x2000 - (0x1100 + GameFixes.MareNameLea + 7)).CopyTo(f, 0x1100 - TextRva + TextRaw + GameFixes.MareNameLea + 3);
+            }
+            System.Text.Encoding.ASCII.GetBytes(sharedName + "\0").CopyTo(f, data(0x2000));
+            BitConverter.GetBytes(0x2200).CopyTo(f, data(0x2100));        // names
+            BitConverter.GetBytes(0x2300).CopyTo(f, data(0x2100) + 12);   // dll name
+            BitConverter.GetBytes(0x2400).CopyTo(f, data(0x2100) + 16);   // slots; an empty descriptor follows
+            System.Text.Encoding.ASCII.GetBytes("KERNEL32.dll\0").CopyTo(f, data(0x2300));
+            System.Text.Encoding.ASCII.GetBytes("CloseHandle\0").CopyTo(f, data(0x2500) + 2);
+            System.Text.Encoding.ASCII.GetBytes((withTerminate ? "TerminateProcess" : "ExitProcess") + "\0").CopyTo(f, data(0x2520) + 2);
+            foreach (int table in new[] { 0x2200, 0x2400 })
+            {
+                BitConverter.GetBytes(0x2500L).CopyTo(f, data(table));
+                BitConverter.GetBytes(0x8000000000000010UL).CopyTo(f, data(table) + 8);
+                BitConverter.GetBytes(0x2520L).CopyTo(f, data(table) + 16);
+            }
+            return f;
+        }
+
+        static bool QuitPatchFits(GameFixes.Fix fix)
+        {
+            try { GameFixes.BuildQuitPatch(fix.ExitReg, 0, 0, 0, fix.Length, 0x4B51); return true; }
+            catch (InvalidOperationException) { return false; }
+        }
+
+        // The quit fix must hand the exit code to the collection's bootstrapper, and must not be used where it could not.
+        static void QuitFixTests()
+        {
+            Console.WriteLine("Quit fix: exit code hand-over to the collection (synthetic game executable)");
+            string root = Path.Combine(Path.GetTempPath(), "KHHotfix-quitfix-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Func<string, byte[], GameFixes.Site> locate = delegate(string variant, byte[] image)
+                {
+                    string exe = Path.Combine(root, variant, "KINGDOM HEARTS FINAL MIX.exe");
+                    Directory.CreateDirectory(Path.GetDirectoryName(exe));
+                    File.WriteAllBytes(exe, image);
+                    GameFixes.PeInfo pe;
+                    List<GameFixes.Site> sites = GameFixes.Locate(exe, out pe);
+                    return sites.Count == 1 ? sites[0] : null;
+                };
+                GameFixes.Fix fix = GameFixes.Catalog[0];
+                GameFixes.Site site = locate("ok", MakeQuitImage(true, "Mare_mem", true));
+                Expect(site != null && site.Problem == null && site.Rva == 0x1000 && site.WriterRva == 0x1100 && site.TerminateSlot == 0x2410,
+                    "quit site, Mare_mem writer and TerminateProcess import slot found (imports by ordinal skipped)");
+                if (site != null && site.Problem == null)
+                {
+                    int at = site.Rva + fix.Offset;
+                    byte[] patch = GameFixes.BuildQuitPatch(fix.ExitReg, at, site.WriterRva, site.TerminateSlot, fix.Length);
+                    Expect(at + 7 + BitConverter.ToInt32(patch, 3) == 0x1100 && at + 19 + BitConverter.ToInt32(patch, 15) == 0x2410,
+                        "the patch hands the exit code to the writer, then calls TerminateProcess through the import slot");
+                }
+                site = locate("nowriter", MakeQuitImage(false, "Mare_mem", true));
+                Expect(site != null && site.Problem != null && site.Problem.Contains("hand-over"), "without the Mare_mem writer the quit fix is not used (it would break going back to the title screen or menu)");
+                site = locate("othername", MakeQuitImage(true, "Mare_xyz", true));
+                Expect(site != null && site.Problem != null && site.Problem.Contains("hand-over"), "a look-alike writer for another shared memory name is rejected");
+                site = locate("noterminate", MakeQuitImage(true, "Mare_mem", false));
+                Expect(site != null && site.Problem != null && site.Problem.Contains("TerminateProcess"), "without a TerminateProcess import the quit fix is not used");
+            }
+            finally { try { Directory.Delete(root, true); } catch { } }
+        }
+
         // A tiny 64-bit PE whose .text holds the code shapes the loading guard looks for, wired up like the real game.
         static byte[] MakeLoadingImage(bool ambiguous, bool brokenChain, bool foreignAudioSetter = false)
         {
@@ -765,14 +863,20 @@ namespace KHHotfix
             byte[] hay = { 1, 0xAA, 9, 0xBB, 0xCC, 0xDD, 0xAA, 7, 0xBB, 0xCC, 0xDE };
             List<int> found = GameFixes.FindAll(hay, 0, hay.Length, pat);
             Expect(found.Count == 1 && found[0] == 1, "signature scan finds the single exact match");
-            byte[] patch = GameFixes.BuildQuitPatch(0xDA, 0x00007FF912345678UL, 25);
-            Expect(patch.Length == 25 && patch[0] == 0x89 && patch[1] == 0xDA && patch[6] == 0x48 && patch[7] == 0xB8
-                && BitConverter.ToUInt64(patch, 8) == 0x00007FF912345678UL && patch[16] == 0xFF && patch[17] == 0xD0 && patch.Skip(18).All(b => b == 0xCC),
-                "quit patch encodes mov edx,ebx / or rcx,-1 / mov rax,imm64 / call rax");
-            Expect(GameFixes.Catalog.Length == 5 && GameFixes.Catalog.All(f => f.Length >= 18 && f.Offset + f.Length <= f.Pattern.Length && f.Pattern[0].HasValue),
-                "every catalogued fix has room for the patch");
+            byte[] patch = GameFixes.BuildQuitPatch(3, 0x1000, 0x800, 0x5000, 25);
+            Expect(patch.Length == 25 && patch[0] == 0x89 && patch[1] == 0xD9 && patch[2] == 0xE8 && 0x1000 + 7 + BitConverter.ToInt32(patch, 3) == 0x800
+                && patch[7] == 0x89 && patch[8] == 0xDA && patch[9] == 0x48 && patch[10] == 0x83 && patch[11] == 0xC9 && patch[12] == 0xFF
+                && patch[13] == 0xFF && patch[14] == 0x15 && 0x1000 + 19 + BitConverter.ToInt32(patch, 15) == 0x5000 && patch.Skip(19).All(b => b == 0xCC),
+                "quit patch encodes mov ecx,ebx / call <Mare_mem writer> / mov edx,ebx / or rcx,-1 / call [TerminateProcess import]");
+            patch = GameFixes.BuildQuitPatch(7, 0x2000, 0x3000, 0x1000, 22, 0x4B51);
+            Expect(patch.Length == 22 && patch[1] == 0xF9 && 0x2000 + 7 + BitConverter.ToInt32(patch, 3) == 0x3000 && patch[7] == 0xBA
+                && BitConverter.ToUInt32(patch, 8) == 0x4B51 && patch[16] == 0xFF && patch[17] == 0x15 && 0x2000 + 22 + BitConverter.ToInt32(patch, 18) == 0x1000,
+                "quit patch with the exit code in edi and a diagnostic marker (22 bytes)");
+            Expect(GameFixes.Catalog.Length == 5 && GameFixes.Catalog.All(f => f.Offset + f.Length <= f.Pattern.Length && f.Pattern[0].HasValue && QuitPatchFits(f)),
+                "every catalogued fix has room for the patch, even with a marker");
             GameFixes.PeInfo me = GameFixes.ReadPe(File.ReadAllBytes(System.Windows.Forms.Application.ExecutablePath));
             Expect(me != null && me.TextRawSize > 0 && me.SizeOfImage > 0, "PE reader finds the .text section");
+            QuitFixTests();
 
             Console.WriteLine("Endless loading screen guard: locating the game data");
             LoadingGuard.Layout lay = LoadingGuard.Locate(MakeLoadingImage(false, false));

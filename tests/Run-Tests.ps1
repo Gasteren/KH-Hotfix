@@ -16,6 +16,7 @@ $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if ($LASTEXITCODE -ne 0) { throw 'FakeKH build failed' }
 Copy-Item "$work\FakeKH.exe" (Join-Path $game 'KINGDOM HEARTS HD 1.5+2.5 ReMIX.exe')
 Copy-Item "$work\FakeKH.exe" (Join-Path $game 'KINGDOM HEARTS FINAL MIX.exe')
+Copy-Item "$work\FakeKH.exe" (Join-Path $game 'WaitTitleProject.exe')
 . (Join-Path $root 'KHHotfix.Common.ps1')
 Invoke-HotfixBuild $root $hot   # fresh build from src\ (never uses or locks the binaries of a running hotfix)
 $env:KHHOTFIX_INSTANCE = '.test'  # separate session lock, so the tests also run while a real game session is active
@@ -32,6 +33,7 @@ ShowDialogs=0
 QuitHangKillSeconds=5
 HungWindowKillSeconds=6
 ExitGraceSeconds=3
+WaitScreenCloseSeconds=4
 PanicHotkey=Ctrl+Alt+Shift+F11
 BugReportHotkey=Ctrl+Alt+Shift+F10
 ReportRelay=http://127.0.0.1:$port
@@ -116,6 +118,16 @@ try {
     $rep = Get-Reports | Sort-Object Name | Select-Object -Last 1
     Expect ($rep -and @(Get-ChildItem $rep.FullName -Filter '*frozen*.dmp').Count -eq 1 -and (Get-Content -Raw (Join-Path $rep.FullName 'summary.txt')) -match 'Freeze analysis') 'frozen window: snapshot taken and analyzed'
 
+    Write-Host 'Scenario: game ends on its way back to its title screen (loading screen left behind)'
+    $posts = (Get-Posts).Count
+    $r = Invoke-Session 'menustuck'
+    Expect ($r.Log -match 'Tracking WaitTitleProject\.exe' -and $r.Log -match 'KINGDOM HEARTS FINAL MIX\.exe \(pid \d+\) exited, code 0x00000001') 'game went back to its title screen (exit code 1) and its loading screen was tracked'
+    Expect ($r.Log -match 'WaitTitleProject\.exe \(pid \d+\) was terminated by the hotfix \(was left on screen for \d+ s after the game ended') 'loading screen left behind is closed'
+    Expect ($r.Seconds -lt 45) "session ended by itself ($($r.Seconds) s)"
+    Expect ($r.Log -match 'NOTICE: KINGDOM HEARTS session summary: .*did not get back to its title screen or the collection menu') 'player told to start the game again from Steam'
+    $post = Get-NewPost $posts
+    Expect ($post -and $post.Hook -eq '1' -and $post.Json.thread_name -match '^\[KH1\] WaitTitleProject was left on screen') 'reported to the maintainer'
+
     Write-Host 'Scenario: crash while saving, then next launch'
     $null = Invoke-Session 'corruptsave'
     $r = Invoke-Session 'normal'
@@ -177,7 +189,9 @@ try {
         $out = & (Join-Path $hot 'KHHotfixCli.exe') --fixes-scan $kh.Path | Out-String
         Expect ($out -match 'KINGDOM HEARTS FINAL MIX\.exe\s+Endless loading screen\s+ready') 'endless-loading guard matches the installed KH1'
         Expect ($out -match 'Endless loading screen\s+ready \(.*audio-failure flag RVA 0x[0-9A-F]+') 'audio-failure flag found in the installed KH1'
-        Expect ($out -match 'KINGDOM HEARTS FINAL MIX\.exe\s+Quit Game crash/freeze\s+ready') 'quit fix matches the installed KH1'
+        foreach ($g in 'KINGDOM HEARTS FINAL MIX', 'KINGDOM HEARTS II FINAL MIX', 'KINGDOM HEARTS Birth by Sleep FINAL MIX', 'KINGDOM HEARTS Re_Chain of Memories', 'KINGDOM HEARTS Theater') {
+            Expect ($out -match ([regex]::Escape("$g.exe") + '\s+Quit Game crash/freeze\s+ready \(RVA 0x[0-9A-F]+, exit code hand-over at RVA 0x[0-9A-F]+')) "quit fix with the exit code hand-over matches the installed $g"
+        }
     }
     else { Write-Host '  SKIP  game not installed - real-executable checks skipped' }
 }

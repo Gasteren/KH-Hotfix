@@ -60,7 +60,7 @@ namespace KHHotfix
         SaveGuard saves;
         DisplayGuard display;
         ApplicationContext ctx;
-        DateTime idleSinceUtc = DateTime.MinValue;
+        DateTime idleSinceUtc = DateTime.MinValue, waitAloneSinceUtc = DateTime.MinValue;
         bool busy, guarding, finishing, panicked;
         NotifyIcon tray;
         int tick;
@@ -236,6 +236,7 @@ namespace KHHotfix
                 LaunchBugForm(bugDir);
             }
             Watch(now);
+            CloseStuckWaitScreen(now);
             if (tick % 2 == 0) saves.Poll();
             if (live.Count > 0) { idleSinceUtc = DateTime.MinValue; return; }
             if (idleSinceUtc == DateTime.MinValue) idleSinceUtc = now;
@@ -380,6 +381,33 @@ namespace KHHotfix
             t.KillReason = reason;
             if (!Native.TerminateProcess(t.Handle, CrashCodes.KilledByHotfix)) Log.Error("TerminateProcess failed, error " + Marshal.GetLastWin32Error());
             postNotices.Detail(t.Name + ".exe " + reason + ". The hotfix closed it for you after backing up your saves.");
+        }
+
+        // A game going back to its title screen or to the collection menu shows WaitTitleProject.exe (a loading screen) and
+        // ends; the bootstrapper then starts the game again or opens the menu, and that closes the screen. When the game
+        // ends without handing over (it crashed or was closed on its way out), nothing ever closes the screen and the
+        // player is left on an endless loading screen.
+        void CloseStuckWaitScreen(DateTime now)
+        {
+            if (Settings.WaitScreenCloseSeconds <= 0 || live.Count == 0
+                || live.Values.Any(t => t.KilledByHotfix || !t.Name.Equals("WaitTitleProject", StringComparison.OrdinalIgnoreCase)))
+            {
+                waitAloneSinceUtc = DateTime.MinValue;
+                return;
+            }
+            if (waitAloneSinceUtc == DateTime.MinValue) waitAloneSinceUtc = now;
+            double alone = (now - waitAloneSinceUtc).TotalSeconds;
+            if (alone < Settings.WaitScreenCloseSeconds) return;
+            string reason = string.Format(CultureInfo.InvariantCulture, "was left on screen for {0:0} s after the game ended (nothing was started after it)", alone);
+            foreach (TrackedProcess t in live.Values)
+            {
+                Log.Warn("Closing " + t.Label + " - it " + reason);
+                t.KilledByHotfix = true;
+                t.KillReason = reason;
+                if (!Native.TerminateProcess(t.Handle, CrashCodes.KilledByHotfix)) Log.Error("TerminateProcess failed, error " + Marshal.GetLastWin32Error());
+            }
+            postNotices.Add("KINGDOM HEARTS did not get back to its title screen or the collection menu, so the hotfix closed the loading screen it left behind. "
+                + "Start the game again from Steam.");
         }
 
         void OnPanic()

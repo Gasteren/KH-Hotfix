@@ -1,6 +1,8 @@
 // Test double for the KH executables, used by Run-Tests.ps1. Copied into a fake game folder as
-//   "KINGDOM HEARTS HD 1.5+2.5 ReMIX.exe" (bootstrapper) and "KINGDOM HEARTS FINAL MIX.exe" (game).
-// FAKEKH_MODE: normal | crash | hang | hungwindow | corruptsave | deletesave | idle (window stays open until killed)
+//   "KINGDOM HEARTS HD 1.5+2.5 ReMIX.exe" (bootstrapper), "KINGDOM HEARTS FINAL MIX.exe" (game) and
+//   "WaitTitleProject.exe" (the collection's loading screen: stays open until something closes it).
+// FAKEKH_MODE: normal | crash | hang | hungwindow | corruptsave | deletesave | idle (window stays open until killed) |
+//   menustuck (goes back to its title screen: starts WaitTitleProject.exe and exits with 1, but nothing starts it again)
 // FakeKH.exe --fake-discord <dir>: a local stand-in for Discord's webhook API (see FakeDiscord below).
 using System;
 using System.Collections.Generic;
@@ -35,6 +37,11 @@ static class FakeKH
             p.WaitForExit();
             return 0;
         }
+        if (me.Equals("WaitTitleProject", StringComparison.OrdinalIgnoreCase))
+        {
+            Application.Run(new Form { Text = "FAKE WaitTitleProject", Width = 300, Height = 120, StartPosition = FormStartPosition.Manual, Left = 60, Top = 220, ShowInTaskbar = false });
+            return 0;
+        }
 
         string save = Path.Combine(savesRoot, @"Steam\76561190000000000\KHFM_WW.png");
         Directory.CreateDirectory(Path.GetDirectoryName(save));
@@ -49,14 +56,19 @@ static class FakeKH
             if (step == 5 && mode == "deletesave") File.Delete(save);
             if (step == 12 && mode == "deletesave") WriteSave(save, 3, -1);
             if (step == 6 && mode == "hungwindow") Thread.Sleep(Timeout.Infinite);
-            if (mode != "idle" && step == (mode == "deletesave" ? 14 : 8)) { timer.Stop(); form.Close(); }
+            if (mode != "idle" && step == (mode == "deletesave" ? 14 : 8))
+            {
+                timer.Stop();
+                if (mode == "menustuck") Process.Start(new ProcessStartInfo(Path.Combine(dir, "WaitTitleProject.exe")) { UseShellExecute = false });
+                form.Close();
+            }
         };
         form.Shown += delegate { timer.Start(); };
         Application.Run(form);
 
         if (mode == "hang") Thread.Sleep(Timeout.Infinite);
         if (mode == "crash" || mode == "corruptsave") Environment.Exit(unchecked((int)0xC0000005));
-        return 0;
+        return mode == "menustuck" ? 1 : 0;
     }
 
     static void WriteSave(string path, int version, int cutAt)

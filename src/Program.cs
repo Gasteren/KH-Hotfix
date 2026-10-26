@@ -15,14 +15,14 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("KH 1.5+2.5 Hotfix")]
 [assembly: System.Reflection.AssemblyProduct("KHHotfix")]
-[assembly: System.Reflection.AssemblyVersion("1.5.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.5.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.5.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.5.1.0")]
 
 namespace KHHotfix
 {
     internal static class Program
     {
-        public const string Version = "1.5.0";
+        public const string Version = "1.5.1";
         public const string Title = "KH 1.5+2.5 Hotfix";
         public const string RestoreTool = "Start menu > KH Hotfix > Restore a KINGDOM HEARTS save";
         public const string ReportTool = "Start menu > KH Hotfix > Report a KINGDOM HEARTS bug";
@@ -135,6 +135,7 @@ namespace KHHotfix
         public static int QuitHangKillSeconds = 20;
         public static int HungWindowKillSeconds = 120;
         public static int ExitGraceSeconds = 8;
+        public static int WaitScreenCloseSeconds = 15;
         public static string PanicHotkey = "Ctrl+Alt+K";
         public static bool ShowDialogs = true;
         public static bool DetailedMessages = false;
@@ -188,6 +189,7 @@ namespace KHHotfix
                     case "quithangkillseconds": QuitHangKillSeconds = Int(val, QuitHangKillSeconds, 0, 3600); break;
                     case "hungwindowkillseconds": HungWindowKillSeconds = Int(val, HungWindowKillSeconds, 0, 3600); break;
                     case "exitgraceseconds": ExitGraceSeconds = Int(val, ExitGraceSeconds, 2, 120); break;
+                    case "waitscreencloseseconds": WaitScreenCloseSeconds = Int(val, WaitScreenCloseSeconds, 0, 3600); break;
                     case "panichotkey": PanicHotkey = val; break;
                     case "showdialogs": ShowDialogs = Bool(val, ShowDialogs); break;
                     case "detailedmessages": DetailedMessages = Bool(val, DetailedMessages); break;
